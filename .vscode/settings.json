@@ -1,0 +1,4 @@
+{
+  "vitest.enable": true,
+  "vitest.commandLine": "npx nx --no-cloud run-many -t test --verbose --testFile"
+}

@@ -3,10 +3,12 @@
   "compilerOptions": {
     "rootDir": ".",
     "sourceMap": true,
+    "esModuleInterop": true,
     "declaration": false,
     "moduleResolution": "node",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
+    "strict": true,
     "importHelpers": true,
     "target": "es2015",
     "module": "esnext",
@@ -14,7 +16,9 @@
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
-    "paths": {}
+    "paths": {
+      "@jmorecroft67/pg-stream-core": ["packages/core/src/index.ts"]
+    }
   },
   "exclude": ["node_modules", "tmp"]
 }
