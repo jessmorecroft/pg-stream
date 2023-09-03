@@ -11,6 +11,9 @@ import {
   mapLeft,
 } from '../parser/parser';
 import { pgOutputMessageParser } from './pgoutput/message-parsers';
+import * as S from 'parser-ts/string';
+import { serverFinalMessageParser, serverFirstMessageParser } from './sasl';
+import * as E from 'fp-ts/Either';
 
 const PROTOCOL_VERSION = 196608;
 
@@ -110,6 +113,19 @@ export const authenticationSASLContinue = pipe(
       pipe(
         B.int32BE(11),
         P.chain(() => B.string()(length - 4)),
+        P.chain((s) =>
+          pipe(
+            S.run(s)(serverFirstMessageParser),
+            E.fold(
+              () =>
+                P.fail<
+                  number,
+                  { salt: Buffer; nonce: string; iterationCount: number }
+                >(),
+              ({ value }) => P.of(value)
+            )
+          )
+        ),
         P.bindTo('serverFirstMessage')
       )
     )
@@ -129,6 +145,15 @@ export const authenticationSASLFinal = pipe(
       pipe(
         B.int32BE(12),
         P.chain(() => B.string()(length - 4)),
+        P.chain((s) =>
+          pipe(
+            S.run(s)(serverFinalMessageParser),
+            E.fold(
+              () => P.fail<number, { serverSignature: Buffer }>(),
+              ({ value }) => P.of(value)
+            )
+          )
+        ),
         P.bindTo('serverFinalMessage')
       )
     )
@@ -478,6 +503,15 @@ export const anyMessage = pipe(
   P.chainFirst(({ contentLength }) => minLeft(contentLength))
 );
 
+export const pgSSLRequestResponse = pipe(
+  B.buffer('S'),
+  P.alt(() => B.buffer('N')),
+  P.map((code) => ({
+    type: 'SSLRequestResponse' as const,
+    useSSL: code.toString() === 'S',
+  }))
+);
+
 export type AuthenticationOk = ValueOf<typeof authenticationOk>;
 export type AuthenticationCleartextPassword = ValueOf<
   typeof authenticationCleartextPassword
@@ -502,6 +536,7 @@ export type CopyDone = ValueOf<typeof copyDone>;
 export type CopyFail = ValueOf<typeof copyFail>;
 export type CopyData = ValueOf<typeof copyData>;
 export type NoticeResponse = ValueOf<typeof noticeResponse>;
+export type SSLRequestResponse = ValueOf<typeof pgSSLRequestResponse>;
 
 export type PgServerMessageTypes =
   | AuthenticationOk
@@ -521,7 +556,8 @@ export type PgServerMessageTypes =
   | CopyDone
   | CopyFail
   | CopyData
-  | NoticeResponse;
+  | NoticeResponse
+  | SSLRequestResponse;
 
 export type SSLRequest = ValueOf<typeof sslRequest>;
 export type StartupMessage = ValueOf<typeof startupMessage>;

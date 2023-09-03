@@ -1,36 +1,23 @@
 import { Chunk, Effect, Stream } from 'effect';
 import { connect, PgSocket } from './pg-socket';
-import { make as makeServer, PgServerSocket } from './pg-server';
+import { make as makeServer, Options, PgServerSocket } from './pg-server';
 import { identity } from 'fp-ts/lib/function';
+import { Query } from '../pg-protocol';
 
 it('should listen and exchange messages', async () => {
-  const { listen } = makeServer({ host: 'localhost' });
+  const options: Options = {
+    host: 'localhost',
+    database: 'testdb',
+    username: 'testuser',
+    password: 'password1',
+  };
+
+  const { listen } = makeServer(options);
 
   const server = (socket: PgServerSocket) =>
     Effect.gen(function* (_) {
-      //yield* _(Effect.delay(Effect.unit, Duration.seconds(1)));
+      yield* _(socket.readOrFail<Query>('Query'));
 
-      console.log('waiting for req');
-      const req = yield* _(socket.read);
-
-      if (req.type !== 'PasswordMessage' || req.password !== 'password1') {
-        yield* _(Effect.fail(new Error('bad msg')));
-      }
-
-      console.log('here2');
-      yield* _(
-        socket.write({
-          type: 'AuthenticationOk',
-        })
-      );
-
-      console.log('here3');
-      const req2 = yield* _(socket.read);
-      if (req2.type !== 'Query') {
-        yield* _(Effect.fail(new Error('bad msg')));
-      }
-
-      console.log('here4');
       yield* _(
         socket.write({
           type: 'RowDescription',
@@ -57,21 +44,6 @@ it('should listen and exchange messages', async () => {
 
   const client = (socket: PgSocket) =>
     Effect.gen(function* (_) {
-      //yield* _(Effect.delay(Effect.unit, Duration.seconds(1)));
-
-      yield* _(
-        socket.write({
-          type: 'PasswordMessage',
-          password: 'password1',
-        })
-      );
-      console.log('write2');
-
-      const resp = yield* _(socket.read);
-      if (resp.type !== 'AuthenticationOk') {
-        return Chunk.empty();
-      }
-
       yield* _(socket.write({ type: 'Query', sql: 'select * from greeting' }));
 
       return yield* _(
@@ -93,7 +65,7 @@ it('should listen and exchange messages', async () => {
           )
         )
       ).pipe(Effect.tap(() => Effect.logInfo('serve is absolutely done'))),
-      connect({ host: address.address, port: address.port }).pipe(
+      connect({ ...options, host: address.address, port: address.port }).pipe(
         Effect.flatMap(client)
       ),
       {

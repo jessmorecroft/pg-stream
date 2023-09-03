@@ -4,28 +4,26 @@ import * as C from 'parser-ts/char';
 import { pipe } from 'fp-ts/lib/function';
 import { ValueOf } from '../../parser/parser';
 
-export const serverFirstMessageParser = (clientNonce: string) =>
-  pipe(
-    S.string('r='),
-    P.chain(() => S.string(clientNonce)),
-    P.chain(() => S.many1(C.notOneOf(','))),
-    P.bindTo('serverNonce'),
-    P.chainFirst(() => S.string(',')),
-    P.bind('salt', () =>
-      pipe(
-        S.string('s='),
-        P.chain(() => S.many1(C.notOneOf(','))),
-        P.map((salt) => Buffer.from(salt, 'base64'))
-      )
-    ),
-    P.chainFirst(() => S.string(',')),
-    P.bind('iterationCount', () =>
-      pipe(
-        S.string('i='),
-        P.chain(() => S.int)
-      )
+export const serverFirstMessageParser = pipe(
+  S.string('r='),
+  P.chain(() => S.many1(C.notOneOf(','))),
+  P.bindTo('nonce'),
+  P.chainFirst(() => S.string(',')),
+  P.bind('salt', () =>
+    pipe(
+      S.string('s='),
+      P.chain(() => S.many1(C.notOneOf(','))),
+      P.map((salt) => Buffer.from(salt, 'base64'))
     )
-  );
+  ),
+  P.chainFirst(() => S.string(',')),
+  P.bind('iterationCount', () =>
+    pipe(
+      S.string('i='),
+      P.chain(() => S.int)
+    )
+  )
+);
 
 export const serverFinalMessageParser = pipe(
   S.string('v='),

@@ -58,7 +58,7 @@ const makeSSLSocket = (options: { socket: net.Socket }) =>
     const { error, secureConnect } = sslListeners(sslSocket);
     return Effect.raceAll([secureConnect, error]).pipe(
       Effect.flatMap(() => Ref.make(true)),
-      Effect.map((endOnDoneRef) =>
+      Effect.flatMap((endOnDoneRef) =>
         makeSocket({ socket: sslSocket, endOnDoneRef })
       )
     );
