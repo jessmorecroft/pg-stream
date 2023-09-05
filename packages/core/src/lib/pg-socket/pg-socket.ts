@@ -5,6 +5,7 @@ import {
   Either,
   Option,
   Queue,
+  Ref,
   Sink,
   Stream,
   identity,
@@ -15,27 +16,24 @@ import * as E from 'fp-ts/Either';
 import * as B from '../parser/buffer';
 import * as socket from '../socket/socket';
 import {
-  AuthenticationCleartextPassword,
-  AuthenticationMD5Password,
-  AuthenticationOk,
-  AuthenticationSASL,
-  AuthenticationSASLContinue,
-  AuthenticationSASLFinal,
   BackendKeyData,
+  DataRow,
   ErrorResponse,
-  NoticeResponse,
   ParameterStatus,
-  ReadyForQuery,
   pgSSLRequestResponse,
   pgServerMessageParser,
 } from '../pg-protocol/message-parsers';
 import { ParseError } from 'parser-ts/lib/ParseResult';
-import { makePgClientMessage } from '../pg-protocol';
+import { makePgClientMessage, makeValueTypeParser } from '../pg-protocol';
 import { BaseSocket } from '../socket/socket';
-import { PgServerMessageTypes } from '../pg-protocol/message-parsers';
+import {
+  PgServerMessageTypes,
+  NoticeResponse,
+} from '../pg-protocol/message-parsers';
 import { createHash, randomBytes } from 'crypto';
 import { Hi, hmacSha256, sha256, xorBuffers } from './util';
 import { logBackendMessage } from './util';
+import * as S from 'parser-ts/string';
 
 export interface Options {
   host: string;
@@ -67,7 +65,8 @@ export class PgFailedAuth extends Data.TaggedClass('PgFailedAuth')<{
 export class PgUnexpectedMessage extends Data.TaggedClass(
   'PgUnexpectedMessage'
 )<{
-  msg: unknown;
+  unexpected: unknown;
+  msg?: string;
 }> {}
 
 export class PgServerError extends Data.TaggedClass('PgServerError')<{
@@ -132,12 +131,42 @@ export const makeSocket = <I extends { type: string }, O>({
       Effect.mapError((e) => (Option.isNone(e) ? new PgReadEnded({}) : e.value))
     );
 
-    const readOrFail = <T extends I>(...type: T['type'][]) =>
+    const readOrFail = <T extends I['type']>(type: T, ...types: T[]) =>
       Effect.filterOrFail(
         read,
-        (msg): msg is T => type.includes(msg.type),
-        (msg) => new PgUnexpectedMessage({ msg })
+        (msg): msg is I & { type: T } =>
+          type === msg.type || types.includes(msg.type as T),
+        (msg) =>
+          new PgUnexpectedMessage({
+            unexpected: msg,
+            msg: `expected message to be any of ${[type, ...types]}`,
+          })
       );
+
+    const readUntil =
+      <T extends I['type']>(type: T, ...types: T[]) =>
+      (isLast: (msg: I & { type: T }) => boolean) =>
+        Effect.gen(function* (_) {
+          const doneRef = yield* _(Ref.make(false));
+          return yield* _(
+            Stream.runCollect(
+              Stream.repeatEffectOption(
+                Effect.flatMap(Ref.get(doneRef), (done) =>
+                  done
+                    ? Effect.fail(Option.none())
+                    : readOrFail(type, ...types).pipe(
+                        Effect.mapError(Option.some),
+                        Effect.flatMap((msg) =>
+                          isLast(msg)
+                            ? Effect.as(Ref.set(doneRef, true), msg)
+                            : Effect.succeed(msg)
+                        )
+                      )
+                )
+              )
+            )
+          );
+        });
 
     const write = (message: O) =>
       push(Option.some(Chunk.of(encoder(message)))).pipe(
@@ -150,6 +179,7 @@ export const makeSocket = <I extends { type: string }, O>({
       readQueue,
       read,
       readOrFail,
+      readUntil,
       write,
       writeSink,
       end,
@@ -166,65 +196,89 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
       })
     );
 
-    const stripBackendLogs = <E, T extends PgServerMessageTypes>(
-      stream: Stream.Stream<never, E, T>
-    ) =>
-      Stream.flatMap(stream, (msg) => {
-        if (msg.type === 'NoticeResponse') {
-          return Stream.zipRight(logBackendMessage(msg), Stream.empty);
+    const logNotices = <T extends PgServerMessageTypes>(msgs: Iterable<T>) =>
+      Effect.forEach(
+        msgs,
+        (
+          msg
+        ): Effect.Effect<
+          never,
+          PgServerError,
+          Exclude<T, NoticeResponse | ErrorResponse>[]
+        > => {
+          switch (msg.type) {
+            case 'NoticeResponse': {
+              return Effect.as(logBackendMessage(msg), []);
+            }
+            case 'ErrorResponse': {
+              return Effect.zipRight(
+                logBackendMessage(msg),
+                Effect.fail(new PgServerError({ error: msg }))
+              );
+            }
+            default: {
+              return Effect.succeed([
+                msg as Exclude<T, NoticeResponse | ErrorResponse>,
+              ]);
+            }
+          }
         }
-        if (msg.type === 'BackendKeyData') {
-          return Stream.zipRight(
-            Effect.log(
-              `backend key data from server, pid: ${msg.pid}, secret key: ${msg.secretKey}`
-            ),
-            Stream.empty
-          );
-        }
-        if (msg.type === 'ErrorResponse') {
-          return Stream.zipRight(
-            logBackendMessage(msg),
-            Stream.fail(new PgServerError({ error: msg }))
-          );
-        }
-        return Stream.succeed(
-          msg as Exclude<T, NoticeResponse | BackendKeyData | ErrorResponse>
+      ).pipe(Effect.map((chunks) => chunks.flat()));
+
+    const executeSql = ({ sql }: { sql: string }) =>
+      Effect.gen(function* (_) {
+        yield* _(clientSocket.write({ type: 'Query', sql }));
+
+        const [rowDescription] = yield* _(
+          clientSocket
+            .readUntil(
+              'ErrorResponse',
+              'NoticeResponse',
+              'RowDescription'
+            )((msg) => msg.type === 'RowDescription')
+            .pipe(Effect.flatMap(logNotices))
         );
+
+        const parsers = rowDescription.fields.map(({ name, dataTypeId }) => ({
+          name,
+          parser: makeValueTypeParser(dataTypeId, {}), // TODO: fix options
+        }));
+
+        const dataRows = (yield* _(
+          clientSocket
+            .readUntil(
+              'ErrorResponse',
+              'NoticeResponse',
+              'DataRow',
+              'ReadyForQuery'
+            )((msg) => msg.type === 'ReadyForQuery')
+            .pipe(Effect.flatMap(logNotices))
+        )).filter((msg): msg is DataRow => msg.type === 'DataRow');
+
+        const rows = dataRows.map((row) =>
+          parsers.reduce((acc, { name, parser }, index) => {
+            const input = row.values[index];
+            if (input !== null) {
+              const parsed = pipe(
+                S.run(input)(parser),
+                E.fold(
+                  () => {
+                    // Failed to parse row value. Just use the original input.
+                    return input;
+                  },
+                  ({ value }) => value
+                )
+              );
+              return { ...acc, [name]: parsed };
+            }
+            return { ...acc, [name]: input };
+          }, {})
+        );
+
+        return rows as any[];
       });
 
-    const readOrFailUntilReady = <T extends PgServerMessageTypes>(
-      ...type: T['type'][]
-    ) =>
-      Stream.runCollect(
-        Stream.repeatEffectOption(
-          Effect.flatMap(
-            clientSocket
-              .readOrFail<
-                | ReadyForQuery
-                | ErrorResponse
-                | NoticeResponse
-                | BackendKeyData
-                | T
-              >(
-                ...([
-                  'ReadyForQuery',
-                  'ErrorResponse',
-                  'NoticeResponse',
-                  'BackendKeyData',
-                  ...type,
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                ] as any[])
-              )
-              .pipe(Effect.mapError(Option.some)),
-            (msg) =>
-              msg.type === 'ReadyForQuery'
-                ? Effect.fail(Option.none())
-                : Effect.succeed(msg)
-          )
-        ).pipe(stripBackendLogs)
-      );
-
-    return { ...clientSocket, readOrFailUntilReady };
+    return { ...clientSocket, logNotices, executeSql };
   });
 
 export const startup = ({
@@ -239,7 +293,7 @@ export const startup = ({
   password: string;
 }) =>
   Effect.gen(function* (_) {
-    const { readOrFail, readOrFailUntilReady, write } = socket;
+    const { readOrFail, readUntil, logNotices, write } = socket;
 
     const parameters = [
       {
@@ -260,11 +314,7 @@ export const startup = ({
     );
 
     const reply = yield* _(
-      readOrFail<
-        | AuthenticationCleartextPassword
-        | AuthenticationMD5Password
-        | AuthenticationSASL
-      >(
+      readOrFail(
         'AuthenticationCleartextPassword',
         'AuthenticationMD5Password',
         'AuthenticationSASL'
@@ -313,9 +363,7 @@ export const startup = ({
           })
         );
 
-        const saslContinue = yield* _(
-          readOrFail<AuthenticationSASLContinue>('AuthenticationSASLContinue')
-        );
+        const saslContinue = yield* _(readOrFail('AuthenticationSASLContinue'));
 
         const { iterationCount, salt, nonce } = saslContinue.serverFirstMessage;
         if (!nonce.startsWith(clientNonce)) {
@@ -345,9 +393,7 @@ export const startup = ({
 
         yield* _(write({ type: 'SASLResponse', clientFinalMessage }));
 
-        const saslFinal = yield* _(
-          readOrFail<AuthenticationSASLFinal>('AuthenticationSASLFinal')
-        );
+        const saslFinal = yield* _(readOrFail('AuthenticationSASLFinal'));
 
         if (
           serverSignature.compare(
@@ -375,17 +421,29 @@ export const startup = ({
       }
     }
 
-    yield* _(readOrFail<AuthenticationOk>('AuthenticationOk'));
+    yield* _(readOrFail('AuthenticationOk'));
 
     const results = yield* _(
-      readOrFailUntilReady<ParameterStatus>('ParameterStatus')
+      readUntil(
+        'ReadyForQuery',
+        'ErrorResponse',
+        'NoticeResponse',
+        'BackendKeyData',
+        'ParameterStatus'
+      )((msg) => msg.type === 'ReadyForQuery').pipe(Effect.flatMap(logNotices))
     );
 
     const serverParameters = new Map(
-      Chunk.map(results, ({ name, value }) => [name, value])
+      results
+        .filter((msg): msg is ParameterStatus => msg.type === 'ParameterStatus')
+        .map(({ name, value }) => [name, value])
     );
 
-    return { serverParameters };
+    const backendKeyData = results.find(
+      (msg): msg is BackendKeyData => msg.type === 'BackendKeyData'
+    );
+
+    return { serverParameters, backendKeyData };
   });
 
 export const make = ({
@@ -430,7 +488,9 @@ export const make = ({
 
     const info = yield* _(startup({ socket: pgSocket, ...options }));
 
-    return { ...pgSocket, ...info };
+    const { executeSql } = pgSocket;
+
+    return { executeSql, info };
   });
 
 export const connect = (options: Options) =>

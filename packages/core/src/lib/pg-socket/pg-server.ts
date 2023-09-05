@@ -1,12 +1,7 @@
 import * as pgSocket from './pg-socket';
 import * as socket from '../socket/socket';
 import * as serverSocket from '../socket/server';
-import {
-  PasswordMessage,
-  StartupMessage,
-  makePgServerMessage,
-  pgClientMessageParser,
-} from '../pg-protocol';
+import { makePgServerMessage, pgClientMessageParser } from '../pg-protocol';
 import { Data, Effect, Stream } from 'effect';
 
 export type PgServerSocket = Effect.Effect.Success<
@@ -29,9 +24,7 @@ export const startup = ({
   Effect.gen(function* (_) {
     const { write, readOrFail } = socket;
 
-    const { parameters } = yield* _(
-      readOrFail<StartupMessage>('StartupMessage')
-    );
+    const { parameters } = yield* _(readOrFail('StartupMessage'));
 
     if (
       parameters.find(({ name }) => name === 'database')?.value !==
@@ -59,9 +52,7 @@ export const startup = ({
 
     yield* _(write({ type: 'AuthenticationCleartextPassword' }));
 
-    const { password } = yield* _(
-      readOrFail<PasswordMessage>('PasswordMessage')
-    );
+    const { password } = yield* _(readOrFail('PasswordMessage'));
 
     if (password === options.password) {
       yield* _(write({ type: 'AuthenticationOk' }));

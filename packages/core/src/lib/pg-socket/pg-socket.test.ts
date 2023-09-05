@@ -1,10 +1,8 @@
-import { Chunk, Effect, Stream } from 'effect';
-import { connect, PgSocket } from './pg-socket';
+import { Effect, Stream } from 'effect';
+import { connect, PgClient } from './pg-socket';
 import { make as makeServer, Options, PgServerSocket } from './pg-server';
-import { identity } from 'fp-ts/lib/function';
-import { Query } from '../pg-protocol';
 
-it('should listen and exchange messages', async () => {
+it('should handle an sql request', async () => {
   const options: Options = {
     host: 'localhost',
     database: 'testdb',
@@ -16,7 +14,7 @@ it('should listen and exchange messages', async () => {
 
   const server = (socket: PgServerSocket) =>
     Effect.gen(function* (_) {
-      yield* _(socket.readOrFail<Query>('Query'));
+      yield* _(socket.readOrFail('Query'));
 
       yield* _(
         socket.write({
@@ -24,11 +22,20 @@ it('should listen and exchange messages', async () => {
           fields: [
             {
               columnId: 1,
-              dataTypeId: 1,
+              dataTypeId: 1043,
               dataTypeModifier: 1,
               dataTypeSize: 1,
               format: 0,
               name: 'column1',
+              tableId: 1,
+            },
+            {
+              columnId: 1,
+              dataTypeId: 23,
+              dataTypeModifier: 1,
+              dataTypeSize: 1,
+              format: 0,
+              name: 'column2',
               tableId: 1,
             },
           ],
@@ -37,23 +44,44 @@ it('should listen and exchange messages', async () => {
       yield* _(
         socket.write({
           type: 'DataRow',
-          values: ['hello'],
+          values: ['hello', '42'],
+        })
+      );
+
+      yield* _(
+        socket.write({
+          type: 'NoticeResponse',
+          notices: [
+            {
+              type: 'V',
+              value: 'INFO',
+            },
+            {
+              type: 'M',
+              value: 'your test is running!',
+            },
+          ],
+        })
+      );
+
+      yield* _(
+        socket.write({
+          type: 'DataRow',
+          values: ['world', '99'],
+        })
+      );
+
+      yield* _(
+        socket.write({
+          type: 'ReadyForQuery',
+          transactionStatus: 'I',
         })
       );
     });
 
-  const client = (socket: PgSocket) =>
+  const handler = (client: PgClient) =>
     Effect.gen(function* (_) {
-      yield* _(socket.write({ type: 'Query', sql: 'select * from greeting' }));
-
-      return yield* _(
-        Stream.runCollect(
-          Stream.take(
-            Stream.fromQueue(socket.readQueue).pipe(Stream.mapEffect(identity)),
-            2
-          )
-        )
-      );
+      return yield* _(client.executeSql({ sql: 'select * from greeting' }));
     });
 
   const program = Effect.flatMap(listen, ({ sockets, address }) =>
@@ -64,9 +92,9 @@ it('should listen and exchange messages', async () => {
             Effect.flatMap(socket, server).pipe(Effect.scoped)
           )
         )
-      ).pipe(Effect.tap(() => Effect.logInfo('serve is absolutely done'))),
+      ).pipe(Effect.tap(() => Effect.logInfo('server is done'))),
       connect({ ...options, host: address.address, port: address.port }).pipe(
-        Effect.flatMap(client)
+        Effect.flatMap(handler)
       ),
       {
         concurrent: true,
@@ -74,26 +102,16 @@ it('should listen and exchange messages', async () => {
     )
   );
 
-  const result = await Effect.runPromise(program.pipe(Effect.scoped));
+  const rows = await Effect.runPromise(program.pipe(Effect.scoped));
 
-  expect(Chunk.toReadonlyArray(result)).toEqual([
+  expect(rows).toEqual([
     {
-      type: 'RowDescription',
-      fields: [
-        {
-          columnId: 1,
-          dataTypeId: 1,
-          dataTypeModifier: 1,
-          dataTypeSize: 1,
-          format: 0,
-          name: 'column1',
-          tableId: 1,
-        },
-      ],
+      column1: 'hello',
+      column2: 42,
     },
     {
-      type: 'DataRow',
-      values: ['hello'],
+      column1: 'world',
+      column2: 99,
     },
   ]);
 });
