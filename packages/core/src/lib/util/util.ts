@@ -1,26 +1,26 @@
 import { Effect, Option } from 'effect';
-import * as net from 'net';
+import { EventEmitter } from 'stream';
 
-export const listen = <T extends net.Socket, A, E, B>({
-  socket,
+export const listen = <T extends EventEmitter, A, E, B>({
+  emitter,
   event,
   onEvent,
   get,
 }: {
-  socket: T;
+  emitter: T;
   event: string;
   onEvent: (_: A) => Effect.Effect<never, E, B>;
-  get: () => Option.Option<A>;
+  get: (emitter: T) => Option.Option<A>;
 }) =>
   Effect.asyncInterrupt<never, E, B>((cb, signal) => {
     const fn = (_: A) => cb(onEvent(_));
-    const _ = get();
+    const _ = get(emitter);
     if (Option.isSome(_)) {
       fn(_.value);
       return;
     }
-    socket.once(event, fn);
+    emitter.once(event, fn);
     signal.onabort = () => {
-      socket.off(event, fn);
+      emitter.off(event, fn);
     };
   });

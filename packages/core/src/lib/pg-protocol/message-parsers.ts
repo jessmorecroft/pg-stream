@@ -600,6 +600,7 @@ const pgServerMessageParsers: PgServerMessageParser[] = [
 ];
 
 const pgClientMessageParsers: PgClientMessageParser[] = [
+  sslRequest,
   saslInitialResponse,
   passwordMessage,
   saslResponse,

@@ -1,9 +1,9 @@
 import { Chunk, Effect, Option, Stream } from 'effect';
-import { makePull } from './make-pull';
+import { pull } from './pull';
 import { Readable } from 'stream';
 
 it('should pull from iterable', async () => {
-  const program = makePull<string>(
+  const program = pull<string>(
     () => Readable.from(['one', 'two'], { objectMode: true }),
     {
       waitForClose: true,
@@ -34,7 +34,7 @@ it('should pull from iterable', async () => {
 
 it('should pull as stream', async () => {
   const stream = Stream.fromPull(
-    makePull(
+    pull(
       () =>
         Readable.from([Buffer.from('one'), Buffer.from('two')], {
           objectMode: true,

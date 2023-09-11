@@ -1,4 +1,4 @@
-import { makePush } from './make-push';
+import { push } from './push';
 import { FileSystem, layer } from '@effect/platform-node/FileSystem';
 import { Effect, Option, Chunk, Either, Sink, Stream } from 'effect';
 import { createWriteStream } from 'fs';
@@ -8,7 +8,7 @@ it('should push "manually"', async () => {
     Effect.flatMap((fs) =>
       fs.makeTempFileScoped().pipe(
         Effect.flatMap((filename) =>
-          makePush<Buffer>(() => createWriteStream(filename), {
+          push<Buffer>(() => createWriteStream(filename), {
             endOnClose: true,
           }).pipe(
             Effect.flatMap((push) =>
@@ -56,7 +56,7 @@ it('should push as sink', async () => {
       fs.makeTempFileScoped().pipe(
         Effect.flatMap((filename) => {
           const sink = Sink.fromPush(
-            makePush<Buffer>(() => createWriteStream(filename), {
+            push<Buffer>(() => createWriteStream(filename), {
               endOnClose: true,
             })
           );

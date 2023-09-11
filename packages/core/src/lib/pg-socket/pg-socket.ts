@@ -225,6 +225,22 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
         }
       ).pipe(Effect.map((chunks) => chunks.flat()));
 
+    const readOrFail = <T extends PgServerMessageTypes['type']>(
+      type: T,
+      ...types: T[]
+    ) =>
+      clientSocket.readOrFail(type, ...types).pipe(
+        Effect.tapError((error) => {
+          if (error._tag === 'PgUnexpectedMessage') {
+            const unexpected = error.unexpected as PgServerMessageTypes;
+            if (unexpected.type === 'ErrorResponse') {
+              return logBackendMessage(unexpected);
+            }
+          }
+          return Effect.unit;
+        })
+      );
+
     const executeSql = ({ sql }: { sql: string }) =>
       Effect.gen(function* (_) {
         yield* _(clientSocket.write({ type: 'Query', sql }));
@@ -278,7 +294,7 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
         return rows as any[];
       });
 
-    return { ...clientSocket, logNotices, executeSql };
+    return { ...clientSocket, readOrFail, logNotices, executeSql };
   });
 
 export const startup = ({
@@ -494,7 +510,7 @@ export const make = ({
   });
 
 export const connect = (options: Options) =>
-  Effect.flatMap(socket.connect(options), (socket) =>
+  Effect.flatMap(socket.make(options), (socket) =>
     make({
       socket,
       ...options,

@@ -1,42 +1,39 @@
 import { Chunk, Data, Effect, Either, Option } from 'effect';
 import { LazyArg } from 'effect/Function';
 import { Writable } from 'stream';
+import { listen } from '../util/util';
 
 export class WritableError extends Data.TaggedClass('WritableError')<{
   cause: Error;
 }> {}
 
-const listeners = (writable: Writable) => ({
-  drain: Effect.asyncInterrupt<never, never, void>((cb, signal) => {
-    const fn = () => cb(Effect.unit);
-    if (!writable.writableNeedDrain) {
-      fn();
-      return;
-    }
-    writable.once('drain', fn);
-    signal.onabort = () => {
-      writable.removeListener('drain', fn);
-    };
-  }),
-  error: Effect.asyncInterrupt<never, WritableError, never>((cb, signal) => {
-    const fn = (cause: Error) => cb(Effect.fail(new WritableError({ cause })));
-    if (writable.errored) {
-      fn(writable.errored);
-      return;
-    }
-    writable.once('error', fn);
-    signal.onabort = () => {
-      writable.removeListener('error', fn);
-    };
-  }),
-});
+const onDrain: (writable: Writable) => Effect.Effect<never, never, void> = (
+  writable
+) =>
+  listen({
+    emitter: writable,
+    event: 'drain',
+    onEvent: () => Effect.unit,
+    get: (_) =>
+      !_.writableNeedDrain ? Option.some<void>(undefined) : Option.none(),
+  });
+
+const onError: (
+  writable: Writable
+) => Effect.Effect<never, WritableError, never> = (writable) =>
+  listen({
+    emitter: writable,
+    event: 'error',
+    onEvent: (cause: Error) => Effect.fail(new WritableError({ cause })),
+    get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
+  });
 
 export interface FromWritableOptions {
   readonly endOnClose?: boolean;
   readonly encoding?: BufferEncoding;
 }
 
-export const makePush = <A>(
+export const push = <A>(
   evaluate: LazyArg<Writable>,
   options?: FromWritableOptions
 ) =>
@@ -45,21 +42,20 @@ export const makePush = <A>(
       return Effect.unit;
     }
     if (options?.endOnClose && !writable.writableEnded) {
-      const { error } = listeners(writable);
       return Effect.raceAll([
         Effect.async<never, never, void>((cb) => {
           writable.end(() => cb(Effect.unit));
         }),
-        error.pipe(Effect.ignore),
+        onError(writable).pipe(Effect.ignore),
       ]);
     }
     return Effect.unit;
   }).pipe(
     Effect.map((writable) => {
-      const { drain, error } = listeners(writable);
-      const drainOrError = Effect.raceAll([drain, error]).pipe(
-        Effect.mapError((e) => [Either.left(e), Chunk.empty()] as const)
-      );
+      const drainOrError = Effect.raceAll([
+        onDrain(writable),
+        onError(writable),
+      ]).pipe(Effect.mapError((e) => [Either.left(e), Chunk.empty()] as const));
       return (input: Option.Option<Chunk.Chunk<A>>) =>
         Effect.suspend(
           (): Effect.Effect<

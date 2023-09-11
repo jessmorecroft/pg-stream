@@ -1,8 +1,13 @@
 import * as pgSocket from './pg-socket';
-import * as socket from '../socket/socket';
 import * as serverSocket from '../socket/server';
-import { makePgServerMessage, pgClientMessageParser } from '../pg-protocol';
+import {
+  StartupMessage,
+  makePgServerMessage,
+  pgClientMessageParser,
+} from '../pg-protocol';
 import { Data, Effect, Stream } from 'effect';
+import { BaseSocket } from '../socket/socket';
+import { WritableError } from '../stream/push';
 
 export type PgServerSocket = Effect.Effect.Success<
   ReturnType<typeof makeSocket>
@@ -17,14 +22,15 @@ export class PgTestServerError extends Data.TaggedClass('PgTestServerError')<{
   msg?: string;
 }> {}
 
-export const startup = ({
-  socket,
-  ...options
-}: { socket: PgServerSocket } & Options) =>
+export const startup = (
+  socket: PgServerSocket,
+  initial: StartupMessage,
+  options: Options
+) =>
   Effect.gen(function* (_) {
     const { write, readOrFail } = socket;
 
-    const { parameters } = yield* _(readOrFail('StartupMessage'));
+    const { parameters } = initial;
 
     if (
       parameters.find(({ name }) => name === 'database')?.value !==
@@ -103,23 +109,51 @@ export const startup = ({
     yield* _(write({ type: 'ReadyForQuery', transactionStatus: 'T' }));
   });
 
-export const makeSocket = ({ socket }: { socket: socket.Socket }) =>
+export const makeSocket = ({ socket }: { socket: BaseSocket }) =>
   pgSocket.makeSocket({
     socket,
     parser: pgClientMessageParser,
     encoder: makePgServerMessage,
   });
 
-export const makeServerSocket = ({
+const makeServerSocket = ({
   socket,
   ...options
-}: { socket: socket.Socket } & Options) =>
+}: { socket: serverSocket.ServerSocket } & Options) =>
   Effect.gen(function* (_) {
-    const sock = yield* _(makeSocket({ socket }));
+    const msg = yield* _(
+      makeSocket({ socket }).pipe(
+        Effect.flatMap((pgSocket) =>
+          pgSocket.readOrFail('StartupMessage', 'SSLRequest').pipe(
+            Effect.flatMap(
+              (
+                msg
+              ): Effect.Effect<never, WritableError, StartupMessage | void> => {
+                if (msg.type === 'SSLRequest') {
+                  return pgSocket.write({
+                    type: 'SSLRequestResponse',
+                    useSSL: true,
+                  });
+                }
+                return Effect.succeed(msg);
+              }
+            )
+          )
+        ),
+        Effect.scoped
+      )
+    );
 
-    yield* _(startup({ socket: sock, ...options }));
-
-    return sock;
+    if (msg) {
+      const pgSocket = yield* _(makeSocket({ socket }));
+      yield* _(startup(pgSocket, msg, options));
+      return pgSocket;
+    }
+    const tlsSocket = yield* _(socket.upgradeToSSL);
+    const pgSocket = yield* _(makeSocket({ socket: tlsSocket }));
+    const msg2 = yield* _(pgSocket.readOrFail('StartupMessage'));
+    yield* _(startup(pgSocket, msg2, options));
+    return pgSocket;
   });
 
 export const make = (options: Options) => {

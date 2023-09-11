@@ -7,7 +7,7 @@ it('should handle an sql request', async () => {
     host: 'localhost',
     database: 'testdb',
     username: 'testuser',
-    password: 'password1',
+    password: 'password',
   };
 
   const { listen } = makeServer(options);
