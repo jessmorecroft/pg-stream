@@ -1,5 +1,5 @@
 import { Effect, Stream } from 'effect';
-import { connect, PgClient } from './pg-socket';
+import { make, PgClient } from './pg-client';
 import {
   make as makeTestServer,
   Options,
@@ -148,7 +148,7 @@ it.each<Options>([
           )
         )
       ).pipe(Effect.tap(() => Effect.logInfo('server is done'))),
-      connect({
+      make({
         ...options,
         host: address.address,
         port: address.port,

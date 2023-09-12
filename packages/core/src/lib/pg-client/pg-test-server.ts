@@ -1,4 +1,4 @@
-import * as pgSocket from './pg-socket';
+import * as pgSocket from './pg-client';
 import * as serverSocket from '../socket/server';
 import {
   StartupMessage,
@@ -10,7 +10,7 @@ import { BaseSocket } from '../socket/socket';
 import { WritableError } from '../stream/push';
 
 export type PgTestServerSocket = Effect.Effect.Success<
-  ReturnType<typeof makeSocket>
+  ReturnType<typeof makePgSocket>
 >;
 
 export type Options = Omit<pgSocket.Options, 'useSSL' | 'host' | 'port'> &
@@ -107,20 +107,20 @@ export const startup = (
     yield* _(write({ type: 'ReadyForQuery', transactionStatus: 'T' }));
   });
 
-export const makeSocket = ({ socket }: { socket: BaseSocket }) =>
-  pgSocket.makeSocket({
+export const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
+  pgSocket.makeMessageSocket({
     socket,
     parser: pgClientMessageParser,
     encoder: makePgServerMessage,
   });
 
-const makeServerSocket = ({
+const makePgServerSocket = ({
   socket,
   ...options
 }: { socket: serverSocket.ServerSocket } & Options) =>
   Effect.gen(function* (_) {
     const msg = yield* _(
-      makeSocket({ socket }).pipe(
+      makePgSocket({ socket }).pipe(
         Effect.flatMap((pgSocket) =>
           pgSocket.readOrFail('StartupMessage', 'SSLRequest').pipe(
             Effect.flatMap(
@@ -143,7 +143,7 @@ const makeServerSocket = ({
     );
 
     if (msg) {
-      const pgSocket = yield* _(makeSocket({ socket }));
+      const pgSocket = yield* _(makePgSocket({ socket }));
       yield* _(startup(pgSocket, msg, options));
       return pgSocket;
     }
@@ -153,7 +153,7 @@ const makeServerSocket = ({
       );
     }
     const tlsSocket = yield* _(socket.upgradeToSSL);
-    const pgSocket = yield* _(makeSocket({ socket: tlsSocket }));
+    const pgSocket = yield* _(makePgSocket({ socket: tlsSocket }));
     const msg2 = yield* _(pgSocket.readOrFail('StartupMessage'));
     yield* _(startup(pgSocket, msg2, options));
     return pgSocket;
@@ -164,7 +164,7 @@ export const make = (options: Options) => {
 
   const listen = Effect.map(ss.listen, ({ sockets, address }) => ({
     sockets: Stream.mapEffect(sockets, (input) =>
-      Effect.map(input, (s) => makeServerSocket({ socket: s, ...options }))
+      Effect.map(input, (s) => makePgServerSocket({ socket: s, ...options }))
     ),
     address,
   }));

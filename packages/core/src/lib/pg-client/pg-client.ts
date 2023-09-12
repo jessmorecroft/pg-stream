@@ -14,7 +14,6 @@ import {
 import * as P from 'parser-ts/Parser';
 import * as E from 'fp-ts/Either';
 import * as B from '../parser/buffer';
-import * as socket from '../socket/socket';
 import {
   BackendKeyData,
   DataRow,
@@ -29,7 +28,7 @@ import {
   makePgClientMessage,
   makeValueTypeParser,
 } from '../pg-protocol';
-import { BaseSocket } from '../socket/socket';
+import { BaseSocket, make as makeSocket } from '../socket/socket';
 import {
   PgServerMessageTypes,
   NoticeResponse,
@@ -40,7 +39,6 @@ import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
 import * as Schema from '@effect/schema/Schema';
 import { formatErrors } from '@effect/schema/TreeFormatter';
-import { message } from '../pg-protocol/pgoutput/message-parsers';
 
 export interface Options {
   host: string;
@@ -53,9 +51,8 @@ export interface Options {
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
 
-export type PgSocket = Effect.Effect.Success<
-  ReturnType<typeof makeClientSocket>
->;
+export type PgSocket = Effect.Effect.Success<ReturnType<typeof makePgSocket>>;
+
 export class PgParseError extends Data.TaggedClass('PgParseError')<{
   cause: ParseError<unknown>;
 }> {}
@@ -109,12 +106,12 @@ const decode =
     );
   };
 
-export const makeSocket = <I extends { type: string }, O>({
+export const makeMessageSocket = <I extends { type: string }, O>({
   socket,
   parser,
   encoder,
 }: {
-  socket: socket.BaseSocket;
+  socket: BaseSocket;
   parser: P.Parser<number, I>;
   encoder: (message: O) => Buffer;
 }) =>
@@ -197,10 +194,10 @@ export const makeSocket = <I extends { type: string }, O>({
     };
   });
 
-const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
+const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
   Effect.gen(function* (_) {
     const clientSocket = yield* _(
-      makeSocket({
+      makeMessageSocket({
         socket,
         parser: pgServerMessageParser,
         encoder: makePgClientMessage,
@@ -323,7 +320,7 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
     return { ...clientSocket, readOrFail, logNotices, executeSql };
   });
 
-export const startup = ({
+const startup = ({
   socket,
   database,
   username,
@@ -387,7 +384,7 @@ export const startup = ({
         })
       );
       // SASL
-    } else if (reply.type === 'AuthenticationSASL') {
+    } else {
       const mechanism = reply.mechanisms.find(
         (item) => item === 'SCRAM-SHA-256'
       );
@@ -488,22 +485,14 @@ export const startup = ({
     return { serverParameters, backendKeyData };
   });
 
-export const make = ({
-  socket,
-  useSSL,
-  ...options
-}: {
-  socket: socket.Socket;
-  useSSL?: boolean;
-  username: string;
-  password: string;
-  database: string;
-}) =>
+export const make = ({ useSSL, ...options }: Options) =>
   Effect.gen(function* (_) {
-    let sock: socket.BaseSocket;
+    const socket = yield* _(makeSocket(options));
+
+    let base: BaseSocket;
     if (useSSL) {
       const sslRequestReply = yield* _(
-        makeSocket({
+        makeMessageSocket({
           socket,
           parser: pgSSLRequestResponse,
           encoder: makePgClientMessage,
@@ -528,12 +517,12 @@ export const make = ({
         );
       }
 
-      sock = yield* _(socket.upgradeToSSL);
+      base = yield* _(socket.upgradeToSSL);
     } else {
-      sock = socket;
+      base = socket;
     }
 
-    const pgSocket = yield* _(makeClientSocket({ socket: sock }));
+    const pgSocket = yield* _(makePgSocket({ socket: base }));
 
     const info = yield* _(startup({ socket: pgSocket, ...options }));
 
@@ -541,11 +530,3 @@ export const make = ({
 
     return { executeSql, info };
   });
-
-export const connect = (options: Options) =>
-  Effect.flatMap(socket.make(options), (socket) =>
-    make({
-      socket,
-      ...options,
-    })
-  );
