@@ -19,7 +19,7 @@ export type ServerSocket = Effect.Effect.Success<
   StreamSuccess<Effect.Effect.Success<Server['listen']>['sockets']>
 >;
 
-interface Options {
+export interface Options {
   host?: string;
   port?: number;
   ssl?: {
@@ -104,7 +104,8 @@ const tlsConnect = (
           cert: Buffer.from(cert),
         });
         return socket.makeBaseSocket(tlsSocket);
-      })
+      }),
+      Effect.tap(() => Effect.log('server socket upgrading to SSL'))
     ),
     (socket) => socket.end
   );

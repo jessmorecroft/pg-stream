@@ -600,7 +600,6 @@ const pgServerMessageParsers: PgServerMessageParser[] = [
 ];
 
 const pgClientMessageParsers: PgClientMessageParser[] = [
-  sslRequest,
   saslInitialResponse,
   passwordMessage,
   saslResponse,
@@ -632,5 +631,6 @@ export const pgClientMessageParser = pipe(
       }))
     )
   ),
-  P.alt((): P.Parser<number, PgClientMessageTypes> => startupMessage)
+  P.alt((): P.Parser<number, PgClientMessageTypes> => startupMessage),
+  P.alt((): P.Parser<number, PgClientMessageTypes> => sslRequest)
 );

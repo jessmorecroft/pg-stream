@@ -23,6 +23,7 @@ import {
   AuthenticationSASLContinue,
   AuthenticationSASLFinal,
   AuthenticationMD5Password,
+  SSLRequestResponse,
 } from './message-parsers';
 import { makePgOutputMessage } from './pgoutput';
 
@@ -416,6 +417,20 @@ export const makePgSSLRequest = ({ requestCode }: NoTag<SSLRequest>) => {
   return buf;
 };
 
+export const makePgSSLRequestResponse = ({
+  useSSL,
+}: NoTag<SSLRequestResponse>) => {
+  const buf = Buffer.allocUnsafe(1);
+
+  if (useSSL) {
+    buf.write('S');
+  } else {
+    buf.write('N');
+  }
+
+  return buf;
+};
+
 export const makePgClientMessage = (message: PgClientMessageTypes): Buffer => {
   switch (message.type) {
     case 'SSLRequest':
@@ -475,5 +490,7 @@ export const makePgServerMessage = (
       return makePgCopyDone();
     case 'CopyFail':
       return makePgCopyFail(message);
+    case 'SSLRequestResponse':
+      return makePgSSLRequestResponse(message);
   }
 };
