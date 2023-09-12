@@ -24,7 +24,11 @@ import {
   pgServerMessageParser,
 } from '../pg-protocol/message-parsers';
 import { ParseError } from 'parser-ts/lib/ParseResult';
-import { makePgClientMessage, makeValueTypeParser } from '../pg-protocol';
+import {
+  MakeValueTypeParserOptions,
+  makePgClientMessage,
+  makeValueTypeParser,
+} from '../pg-protocol';
 import { BaseSocket } from '../socket/socket';
 import {
   PgServerMessageTypes,
@@ -34,6 +38,9 @@ import { createHash, randomBytes } from 'crypto';
 import { Hi, hmacSha256, sha256, xorBuffers } from './util';
 import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
+import * as Schema from '@effect/schema/Schema';
+import { formatErrors } from '@effect/schema/TreeFormatter';
+import { message } from '../pg-protocol/pgoutput/message-parsers';
 
 export interface Options {
   host: string;
@@ -51,6 +58,10 @@ export type PgSocket = Effect.Effect.Success<
 >;
 export class PgParseError extends Data.TaggedClass('PgParseError')<{
   cause: ParseError<unknown>;
+}> {}
+
+export class PgRowParseError extends Data.TaggedClass('PgRowParseError')<{
+  message: string;
 }> {}
 
 export class PgReadEnded extends Data.TaggedClass('PgReadEnded')<
@@ -241,7 +252,15 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
         })
       );
 
-    const executeSql = ({ sql }: { sql: string }) =>
+    const executeSql = <F, T>({
+      sql,
+      schema,
+      options = { parseBigInts: true, parseDates: true, parseNumerics: true },
+    }: {
+      sql: string;
+      schema: Schema.Schema<F, T>;
+      options?: MakeValueTypeParserOptions;
+    }) =>
       Effect.gen(function* (_) {
         yield* _(clientSocket.write({ type: 'Query', sql }));
 
@@ -257,7 +276,7 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
 
         const parsers = rowDescription.fields.map(({ name, dataTypeId }) => ({
           name,
-          parser: makeValueTypeParser(dataTypeId, {}), // TODO: fix options
+          parser: makeValueTypeParser(dataTypeId, options),
         }));
 
         const dataRows = (yield* _(
@@ -288,10 +307,17 @@ const makeClientSocket = ({ socket }: { socket: BaseSocket }) =>
               return { ...acc, [name]: parsed };
             }
             return { ...acc, [name]: input };
-          }, {})
+          }, {} as object)
         );
 
-        return rows as any[];
+        return yield* _(
+          Schema.parse(Schema.array(schema))(rows).pipe(
+            Effect.mapError(
+              (pe) => new PgRowParseError({ message: formatErrors(pe.errors) })
+            ),
+            Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
+          )
+        );
       });
 
     return { ...clientSocket, readOrFail, logNotices, executeSql };
@@ -476,7 +502,7 @@ export const make = ({
   Effect.gen(function* (_) {
     let sock: socket.BaseSocket;
     if (useSSL) {
-      const { useSSL } = yield* _(
+      const sslRequestReply = yield* _(
         makeSocket({
           socket,
           parser: pgSSLRequestResponse,
@@ -491,8 +517,15 @@ export const make = ({
         )
       );
 
-      if (!useSSL) {
-        yield* _(Effect.fail(new Error('server does not support ssl')));
+      if (!sslRequestReply.useSSL) {
+        yield* _(
+          Effect.fail(
+            new PgFailedAuth({
+              msg: 'server does not support SSL',
+              reply: sslRequestReply,
+            })
+          )
+        );
       }
 
       sock = yield* _(socket.upgradeToSSL);

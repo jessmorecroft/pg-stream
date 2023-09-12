@@ -130,7 +130,7 @@ const makeServerSocket = ({
                 if (msg.type === 'SSLRequest') {
                   return pgSocket.write({
                     type: 'SSLRequestResponse',
-                    useSSL: true,
+                    useSSL: !!options.ssl,
                   });
                 }
                 return Effect.succeed(msg);
@@ -146,6 +146,11 @@ const makeServerSocket = ({
       const pgSocket = yield* _(makeSocket({ socket }));
       yield* _(startup(pgSocket, msg, options));
       return pgSocket;
+    }
+    if (!options.ssl) {
+      yield* _(
+        Effect.fail(new PgTestServerError({ msg: 'client requested SSL' }))
+      );
     }
     const tlsSocket = yield* _(socket.upgradeToSSL);
     const pgSocket = yield* _(makeSocket({ socket: tlsSocket }));

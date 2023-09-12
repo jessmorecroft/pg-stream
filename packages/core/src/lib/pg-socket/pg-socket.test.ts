@@ -6,6 +6,8 @@ import {
   PgTestServerSocket,
 } from './pg-test-server';
 import { layer } from '@effect/platform-node/FileSystem';
+import * as Schema from '@effect/schema/Schema';
+import { PgTypes } from '../pg-protocol';
 
 it.each<Options>([
   {
@@ -37,7 +39,7 @@ it.each<Options>([
           fields: [
             {
               columnId: 1,
-              dataTypeId: 1043,
+              dataTypeId: PgTypes['varchar'].baseTypeOid,
               dataTypeModifier: 1,
               dataTypeSize: 1,
               format: 0,
@@ -46,11 +48,38 @@ it.each<Options>([
             },
             {
               columnId: 1,
-              dataTypeId: 23,
+              dataTypeId: PgTypes['int4'].baseTypeOid,
               dataTypeModifier: 1,
               dataTypeSize: 1,
               format: 0,
               name: 'column2',
+              tableId: 1,
+            },
+            {
+              columnId: 1,
+              dataTypeId: PgTypes['timestamp'].baseTypeOid,
+              dataTypeModifier: 1,
+              dataTypeSize: 1,
+              format: 0,
+              name: 'column3',
+              tableId: 1,
+            },
+            {
+              columnId: 1,
+              dataTypeId: PgTypes['int8'].baseTypeOid,
+              dataTypeModifier: 1,
+              dataTypeSize: 1,
+              format: 0,
+              name: 'column4',
+              tableId: 1,
+            },
+            {
+              columnId: 1,
+              dataTypeId: PgTypes['int4'].arrayTypeOid,
+              dataTypeModifier: 1,
+              dataTypeSize: 1,
+              format: 0,
+              name: 'column5',
               tableId: 1,
             },
           ],
@@ -59,7 +88,7 @@ it.each<Options>([
       yield* _(
         socket.write({
           type: 'DataRow',
-          values: ['hello', '42'],
+          values: ['hello', '42', '2022-02-01T10:11:12.002Z', '66', '{1,2,3}'],
         })
       );
 
@@ -82,7 +111,7 @@ it.each<Options>([
       yield* _(
         socket.write({
           type: 'DataRow',
-          values: ['world', '99'],
+          values: ['world', '99', '2023-01-01T10:11:12.001Z', '77', '{4,5,6}'],
         })
       );
 
@@ -96,7 +125,18 @@ it.each<Options>([
 
   const handler = (client: PgClient) =>
     Effect.gen(function* (_) {
-      return yield* _(client.executeSql({ sql: 'select * from greeting' }));
+      return yield* _(
+        client.executeSql({
+          sql: 'select * from greeting',
+          schema: Schema.struct({
+            column1: Schema.string,
+            column2: Schema.number,
+            column3: Schema.DateFromSelf,
+            column4: Schema.bigint,
+            column5: Schema.array(Schema.number),
+          }),
+        })
+      );
     });
 
   const program = Effect.flatMap(listen, ({ sockets, address }) =>
@@ -121,21 +161,23 @@ it.each<Options>([
   );
 
   const rows = await Effect.runPromise(
-    program.pipe(
-      Effect.scoped,
-      Effect.provideLayer(layer),
-      Effect.tapErrorCause(Effect.logFatal)
-    )
+    program.pipe(Effect.scoped, Effect.provideLayer(layer))
   );
 
   expect(rows).toEqual([
     {
       column1: 'hello',
       column2: 42,
+      column3: new Date(Date.UTC(2022, 1, 1, 10, 11, 12, 2)),
+      column4: 66n,
+      column5: [1, 2, 3],
     },
     {
       column1: 'world',
       column2: 99,
+      column3: new Date(Date.UTC(2023, 0, 1, 10, 11, 12, 1)),
+      column4: 77n,
+      column5: [4, 5, 6],
     },
   ]);
 });

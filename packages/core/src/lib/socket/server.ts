@@ -135,7 +135,7 @@ export const make = ({ host, port, ssl }: Options) => {
                     onTrue: Effect.suspend(() => tlsConnect(sock, ssl!)),
                     onFalse: Effect.fail(
                       new ServerError({
-                        cause: new Error('ssl key/cert not specified'),
+                        cause: new Error('SSL key/cert not specified'),
                       })
                     ),
                   }).pipe(
