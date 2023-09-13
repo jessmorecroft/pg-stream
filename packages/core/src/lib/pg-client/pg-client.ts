@@ -16,6 +16,7 @@ import * as E from 'fp-ts/Either';
 import * as B from '../parser/buffer';
 import {
   BackendKeyData,
+  CommandComplete,
   DataRow,
   ErrorResponse,
   ParameterStatus,
@@ -39,7 +40,7 @@ import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
 import * as Schema from '@effect/schema/Schema';
 import { formatErrors } from '@effect/schema/TreeFormatter';
-import { serverFirstMessageParser } from '../pg-protocol/sasl/message-parsers';
+import { RowDescription } from '../pg-protocol/message-parsers';
 
 export interface Options {
   host: string;
@@ -250,10 +251,30 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
         })
       );
 
-    const executeSql = <F, T>({
+    const executeCommand = ({ sql }: { sql: string }) =>
+      Effect.gen(function* (_) {
+        yield* _(clientSocket.write({ type: 'Query', sql }));
+
+        const results = yield* _(
+          clientSocket
+            .readUntil(
+              'ErrorResponse',
+              'NoticeResponse',
+              'CommandComplete',
+              'ReadyForQuery'
+            )((msg) => msg.type === 'ReadyForQuery')
+            .pipe(Effect.flatMap(logNotices))
+        );
+
+        return results.find(
+          (msg): msg is CommandComplete => msg.type === 'CommandComplete'
+        )?.commandTag;
+      });
+
+    const executeQuery = <F, T>({
       sql,
       schema,
-      options = { parseBigInts: true, parseDates: true, parseNumerics: true },
+      options,
     }: {
       sql: string;
       schema: Schema.Schema<F, T>;
@@ -262,31 +283,37 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
       Effect.gen(function* (_) {
         yield* _(clientSocket.write({ type: 'Query', sql }));
 
-        const [rowDescription] = yield* _(
+        const results = yield* _(
           clientSocket
             .readUntil(
               'ErrorResponse',
               'NoticeResponse',
-              'RowDescription'
-            )((msg) => msg.type === 'RowDescription')
-            .pipe(Effect.flatMap(logNotices))
-        );
-
-        const parsers = rowDescription.fields.map(({ name, dataTypeId }) => ({
-          name,
-          parser: makeValueTypeParser(dataTypeId, options),
-        }));
-
-        const dataRows = (yield* _(
-          clientSocket
-            .readUntil(
-              'ErrorResponse',
-              'NoticeResponse',
+              'RowDescription',
               'DataRow',
+              'CommandComplete',
               'ReadyForQuery'
             )((msg) => msg.type === 'ReadyForQuery')
             .pipe(Effect.flatMap(logNotices))
-        )).filter((msg): msg is DataRow => msg.type === 'DataRow');
+        );
+
+        const parsers =
+          results
+            .find((msg): msg is RowDescription => msg.type === 'RowDescription')
+            ?.fields.map(({ name, dataTypeId }) => ({
+              name,
+              parser: makeValueTypeParser(
+                dataTypeId,
+                options ?? {
+                  parseBigInts: true,
+                  parseDates: true,
+                  parseNumerics: true,
+                }
+              ),
+            })) ?? [];
+
+        const dataRows = results.filter(
+          (msg): msg is DataRow => msg.type === 'DataRow'
+        );
 
         const rows = dataRows.map((row) =>
           parsers.reduce((acc, { name, parser }, index) => {
@@ -318,7 +345,13 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
         );
       });
 
-    return { ...clientSocket, readOrFail, logNotices, executeSql };
+    return {
+      ...clientSocket,
+      readOrFail,
+      logNotices,
+      executeQuery,
+      executeCommand,
+    };
   });
 
 const startup = ({
@@ -528,7 +561,5 @@ export const make = ({ useSSL, ...options }: Options) =>
 
     const info = yield* _(startup({ socket: pgSocket, ...options }));
 
-    const { executeSql } = pgSocket;
-
-    return { executeSql, info };
+    return { ...pgSocket, info };
   });

@@ -24,32 +24,28 @@ describe('core', () => {
       const pg3 = yield* _(pgPool.get());
 
       yield* _(
-        pg1.executeSql({
-          sql: 'create table mytable ( id serial, hello varchar )',
-          schema: Schema.never,
+        pg1.executeCommand({
+          sql: 'create table if not exists mytable ( id serial, hello varchar )',
         })
       );
 
       yield* _(
         Effect.all([
-          pg1.executeSql({
-            sql: 'insert into mytable ( hello ) values ("cya")',
-            schema: Schema.never,
+          pg1.executeCommand({
+            sql: "insert into mytable ( hello ) values ('cya')",
           }),
-          pg2.executeSql({
-            sql: 'insert into mytable ( hello ) values ("goodbye")',
-            schema: Schema.never,
+          pg2.executeCommand({
+            sql: "insert into mytable ( hello ) values ('goodbye')",
           }),
-          pg3.executeSql({
-            sql: 'insert into mytable ( hello ) values ("adios")',
-            schema: Schema.never,
+          pg3.executeCommand({
+            sql: "insert into mytable ( hello ) values ('adios')",
           }),
         ])
       );
 
       const rows = yield* _(
-        pg1.executeSql({
-          sql: 'select * from mytable',
+        pg1.executeQuery({
+          sql: 'select *  from mytable',
           schema: Schema.struct({
             id: Schema.number,
             hello: Schema.string,
@@ -58,9 +54,8 @@ describe('core', () => {
       );
 
       yield* _(
-        pg1.executeSql({
+        pg1.executeCommand({
           sql: 'drop table mytable',
-          schema: Schema.never,
         })
       );
 
@@ -69,6 +64,19 @@ describe('core', () => {
 
     const rows = await Effect.runPromise(program.pipe(Effect.scoped));
 
-    expect(rows).equals([1, 2, 3]);
+    expect(rows).toEqual([
+      {
+        id: 1,
+        hello: 'cya',
+      },
+      {
+        id: 2,
+        hello: 'goodbye',
+      },
+      {
+        id: 3,
+        hello: 'adios',
+      },
+    ]);
   });
 });

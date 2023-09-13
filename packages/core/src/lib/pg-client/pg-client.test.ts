@@ -126,7 +126,7 @@ it.each<Options>([
   const handler = (client: PgClient) =>
     Effect.gen(function* (_) {
       return yield* _(
-        client.executeSql({
+        client.executeQuery({
           sql: 'select * from greeting',
           schema: Schema.struct({
             column1: Schema.string,
