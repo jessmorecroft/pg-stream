@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "test:watch": "nx --no-cloud run-many -t test --watch"
+    "test": "nx --no-cloud run-many -t test",
+    "test:watch": "nx --no-cloud run-many -t test --watch",
+    "build": "nx --no-cloud run-many -t build"
   },
   "private": true,
   "dependencies": {
@@ -15,20 +17,21 @@
     "parser-ts": "^0.7.0"
   },
   "devDependencies": {
-    "@nx/eslint-plugin": "16.5.5",
-    "@nx/js": "16.5.5",
-    "@nx/linter": "16.5.5",
-    "@nx/vite": "16.5.5",
-    "@nx/workspace": "16.5.5",
+    "@nx/eslint-plugin": "16.8.1",
+    "@nx/js": "16.8.1",
+    "@nx/node": "16.8.1",
+    "@nx/linter": "16.8.1",
+    "@nx/vite": "16.8.1",
+    "@nx/workspace": "16.8.1",
     "@types/node": "^20.5.7",
-    "@typescript-eslint/eslint-plugin": "^5.60.1",
-    "@typescript-eslint/parser": "^5.60.1",
+    "@typescript-eslint/eslint-plugin": "5.62.0",
+    "@typescript-eslint/parser": "5.62.0",
     "@vitest/coverage-c8": "~0.32.0",
     "@vitest/ui": "~0.32.0",
-    "eslint": "~8.15.0",
+    "eslint": "8.46.0",
     "eslint-config-prettier": "8.1.0",
-    "nx": "16.5.5",
-    "nx-cloud": "latest",
+    "nx": "16.8.1",
+    "nx-cloud": "16.4.0",
     "prettier": "^2.6.2",
     "typescript": "~5.1.3",
     "verdaccio": "^5.0.4",

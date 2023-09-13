@@ -113,9 +113,10 @@ export const authenticationSASLContinue = pipe(
       pipe(
         B.int32BE(11),
         P.chain(() => B.string()(length - 4)),
-        P.chain((s) =>
+        P.bindTo('serverFirstMessage'),
+        P.bind('serverFirstMessageParsed', ({ serverFirstMessage }) =>
           pipe(
-            S.run(s)(serverFirstMessageParser),
+            S.run(serverFirstMessage)(serverFirstMessageParser),
             E.fold(
               () =>
                 P.fail<
@@ -125,15 +126,24 @@ export const authenticationSASLContinue = pipe(
               ({ value }) => P.of(value)
             )
           )
-        ),
-        P.bindTo('serverFirstMessage')
+        )
       )
     )
   ),
-  P.map(({ contents: { serverFirstMessage } }) => ({
-    type: 'AuthenticationSASLContinue' as const,
-    serverFirstMessage,
-  }))
+  P.map(
+    ({
+      contents: {
+        serverFirstMessage,
+        serverFirstMessageParsed: { iterationCount, nonce, salt },
+      },
+    }) => ({
+      type: 'AuthenticationSASLContinue' as const,
+      serverFirstMessage,
+      iterationCount,
+      nonce,
+      salt,
+    })
+  )
 );
 
 export const authenticationSASLFinal = pipe(

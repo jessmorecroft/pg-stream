@@ -39,6 +39,7 @@ import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
 import * as Schema from '@effect/schema/Schema';
 import { formatErrors } from '@effect/schema/TreeFormatter';
+import { serverFirstMessageParser } from '../pg-protocol/sasl/message-parsers';
 
 export interface Options {
   host: string;
@@ -404,7 +405,8 @@ const startup = ({
 
         const saslContinue = yield* _(readOrFail('AuthenticationSASLContinue'));
 
-        const { iterationCount, salt, nonce } = saslContinue.serverFirstMessage;
+        const { iterationCount, salt, nonce, serverFirstMessage } =
+          saslContinue;
         if (!nonce.startsWith(clientNonce)) {
           yield* _(
             Effect.fail(
@@ -419,7 +421,7 @@ const startup = ({
         const clientFinalMessageWithoutProof = `c=${Buffer.from(
           clientFirstMessageHeader
         ).toString('base64')},r=${nonce}`;
-        const authMessage = `${clientFirstMessageBody},${saslContinue.serverFirstMessage},${clientFinalMessageWithoutProof}`;
+        const authMessage = `${clientFirstMessageBody},${serverFirstMessage},${clientFinalMessageWithoutProof}`;
 
         const clientSignature = hmacSha256(storedKey, authMessage);
         const clientProofBytes = xorBuffers(clientKey, clientSignature);

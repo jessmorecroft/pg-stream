@@ -1,0 +1,30 @@
+version: '3'
+
+services:
+  build:
+    extends:
+      file: docker-compose.base.yml
+      service: nx-app-base
+    command: npm run build
+
+  test:
+    extends:
+      file: docker-compose.base.yml
+      service: nx-app-base
+    environment:
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+    command: npm run test:watch
+    depends_on:
+      db:
+        condition: service_started
+
+  db:
+    image: body1967/postgres:14-alpine
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_PASSWORD=topsecret
+      - POSTGRES_HOST_AUTH_METHOD=md5
+
+volumes:
+  mono-node-modules: null
