@@ -29,18 +29,34 @@ describe('core', () => {
         })
       );
 
+      const delay = <R, E, A>(effect: Effect.Effect<R, E, A>) =>
+        Effect.randomWith((random) =>
+          Effect.flatMap(random.nextIntBetween(1, 200), (wait) =>
+            Effect.delay(effect, `${wait} millis`)
+          )
+        );
+
       yield* _(
-        Effect.all([
-          pg1.executeCommand({
-            sql: "insert into mytable ( hello ) values ('cya')",
-          }),
-          pg2.executeCommand({
-            sql: "insert into mytable ( hello ) values ('goodbye')",
-          }),
-          pg3.executeCommand({
-            sql: "insert into mytable ( hello ) values ('adios')",
-          }),
-        ])
+        Effect.all(
+          [
+            delay(
+              pg1.executeCommand({
+                sql: "insert into mytable ( hello ) values ('cya')",
+              })
+            ),
+            delay(
+              pg2.executeCommand({
+                sql: "insert into mytable ( hello ) values ('goodbye')",
+              })
+            ),
+            delay(
+              pg3.executeCommand({
+                sql: "insert into mytable ( hello ) values ('adios')",
+              })
+            ),
+          ],
+          { concurrency: 'unbounded' }
+        )
       );
 
       const rows = yield* _(
@@ -64,19 +80,18 @@ describe('core', () => {
 
     const rows = await Effect.runPromise(program.pipe(Effect.scoped));
 
-    expect(rows).toEqual([
-      {
-        id: 1,
-        hello: 'cya',
-      },
-      {
-        id: 2,
-        hello: 'goodbye',
-      },
-      {
-        id: 3,
-        hello: 'adios',
-      },
-    ]);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          hello: 'cya',
+        }),
+        expect.objectContaining({
+          hello: 'goodbye',
+        }),
+        expect.objectContaining({
+          hello: 'adios',
+        }),
+      ])
+    );
   });
 });
