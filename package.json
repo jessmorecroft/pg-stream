@@ -5,6 +5,8 @@
   "scripts": {
     "test": "nx --no-cloud run-many -t test",
     "test:watch": "nx --no-cloud run-many -t test --watch",
+    "docker:test": "docker compose up test",
+    "docker:test:watch": "TEST_WATCH_MODE=1 docker compose up test",
     "build": "nx --no-cloud run-many -t build"
   },
   "private": true,

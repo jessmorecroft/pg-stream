@@ -10,6 +10,7 @@ describe('core', () => {
         makePgPool({
           host: 'db',
           port: 5432,
+          useSSL: true,
           database: 'postgres',
           username: 'postgres',
           password: 'topsecret',
@@ -29,31 +30,18 @@ describe('core', () => {
         })
       );
 
-      const delay = <R, E, A>(effect: Effect.Effect<R, E, A>) =>
-        Effect.randomWith((random) =>
-          Effect.flatMap(random.nextIntBetween(1, 200), (wait) =>
-            Effect.delay(effect, `${wait} millis`)
-          )
-        );
-
       yield* _(
         Effect.all(
           [
-            delay(
-              pg1.executeCommand({
-                sql: "insert into mytable ( hello ) values ('cya')",
-              })
-            ),
-            delay(
-              pg2.executeCommand({
-                sql: "insert into mytable ( hello ) values ('goodbye')",
-              })
-            ),
-            delay(
-              pg3.executeCommand({
-                sql: "insert into mytable ( hello ) values ('adios')",
-              })
-            ),
+            pg1.executeCommand({
+              sql: "insert into mytable ( hello ) values ('cya')",
+            }),
+            pg2.executeCommand({
+              sql: "insert into mytable ( hello ) values ('goodbye')",
+            }),
+            pg3.executeCommand({
+              sql: "insert into mytable ( hello ) values ('adios')",
+            }),
           ],
           { concurrency: 'unbounded' }
         )
@@ -61,7 +49,7 @@ describe('core', () => {
 
       const rows = yield* _(
         pg1.executeQuery({
-          sql: 'select *  from mytable',
+          sql: 'select * from mytable',
           schema: Schema.struct({
             id: Schema.number,
             hello: Schema.string,

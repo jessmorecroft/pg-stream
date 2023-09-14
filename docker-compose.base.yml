@@ -6,4 +6,4 @@ services:
       context: .
     volumes:
       - ./:/app
-      - mono-node-modules:/app/node_modules
+      - /app/node_modules

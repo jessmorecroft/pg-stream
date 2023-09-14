@@ -1,6 +1,8 @@
-import * as pgSocket from './pg-client';
+import * as pgClient from './pg-client';
+import * as messageSocket from '../socket/message-socket';
 import * as serverSocket from '../socket/server';
 import {
+  PgClientMessageTypes,
   StartupMessage,
   makePgServerMessage,
   pgClientMessageParser,
@@ -13,7 +15,7 @@ export type PgTestServerSocket = Effect.Effect.Success<
   ReturnType<typeof makePgSocket>
 >;
 
-export type Options = Omit<pgSocket.Options, 'useSSL' | 'host' | 'port'> &
+export type Options = Omit<pgClient.Options, 'useSSL' | 'host' | 'port'> &
   serverSocket.Options;
 
 export class PgTestServerError extends Data.TaggedClass('PgTestServerError')<{
@@ -108,11 +110,26 @@ export const startup = (
   });
 
 export const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
-  pgSocket.makeMessageSocket({
-    socket,
-    parser: pgClientMessageParser,
-    encoder: makePgServerMessage,
-  });
+  messageSocket
+    .make({
+      socket,
+      parser: pgClientMessageParser,
+      encoder: makePgServerMessage,
+    })
+    .pipe(
+      Effect.map((pgSocket) => {
+        const readOrFail = <K extends PgClientMessageTypes['type']>(
+          type: K,
+          ...types: K[]
+        ) =>
+          pgSocket.readOrFail({
+            reader: pgSocket.read,
+            types: [type, ...types],
+          });
+
+        return { ...pgSocket, readOrFail };
+      })
+    );
 
 const makePgServerSocket = ({
   socket,

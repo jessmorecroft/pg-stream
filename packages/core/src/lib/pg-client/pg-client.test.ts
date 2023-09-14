@@ -117,6 +117,13 @@ it.each<Options>([
 
       yield* _(
         socket.write({
+          type: 'CommandComplete',
+          commandTag: 'done',
+        })
+      );
+
+      yield* _(
+        socket.write({
           type: 'ReadyForQuery',
           transactionStatus: 'I',
         })
