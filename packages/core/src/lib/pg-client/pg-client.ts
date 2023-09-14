@@ -156,32 +156,30 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
             ),
           }));
 
-        const transformDataRows = ({
+        const transformDataRow = ({
           rowParsers,
-          dataRows,
+          dataRow,
         }: {
           rowParsers: ReturnType<typeof transformRowDescription>;
-          dataRows: DataRow[];
+          dataRow: DataRow;
         }) =>
-          dataRows.map((row) =>
-            rowParsers.reduce((acc, { name, parser }, index) => {
-              const input = row.values[index];
-              if (input !== null) {
-                const parsed = pipe(
-                  S.run(input)(parser),
-                  E.fold(
-                    () => {
-                      // Failed to parse row value. Just use the original input.
-                      return input;
-                    },
-                    ({ value }) => value
-                  )
-                );
-                return { ...acc, [name]: parsed };
-              }
-              return { ...acc, [name]: input };
-            }, {} as object)
-          );
+          rowParsers.reduce((acc, { name, parser }, index) => {
+            const input = dataRow.values[index];
+            if (input !== null) {
+              const parsed = pipe(
+                S.run(input)(parser),
+                E.fold(
+                  () => {
+                    // Failed to parse row value. Just use the original input.
+                    return input;
+                  },
+                  ({ value }) => value
+                )
+              );
+              return { ...acc, [name]: parsed };
+            }
+            return { ...acc, [name]: input };
+          }, {} as object);
 
         const rows = yield* _(
           readUntilReady(
@@ -193,10 +191,8 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
                 pipe(
                   item,
                   P.filter(isDataRow),
-                  P.many,
-                  P.map((dataRows) =>
-                    transformDataRows({ rowParsers, dataRows })
-                  )
+                  P.map((dataRow) => transformDataRow({ rowParsers, dataRow })),
+                  P.many
                 )
               ),
               P.chainFirst(() =>
