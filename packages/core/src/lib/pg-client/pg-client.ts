@@ -401,7 +401,7 @@ export const make = ({ useSSL, ...options }: Options) =>
     const socket = yield* _(makeSocket(options));
 
     let base: BaseSocket;
-    if (useSSL) {
+    if (useSSL || useSSL === undefined) {
       const sslRequestReply = yield* _(
         makeMessageSocket({
           socket,
@@ -417,18 +417,24 @@ export const make = ({ useSSL, ...options }: Options) =>
         )
       );
 
-      if (!sslRequestReply.useSSL) {
-        yield* _(
-          Effect.fail(
-            new PgFailedAuth({
-              msg: 'server does not support SSL',
-              reply: sslRequestReply,
-            })
-          )
-        );
-      }
+      if (sslRequestReply.useSSL) {
+        base = yield* _(socket.upgradeToSSL);
+      } else {
+        if (useSSL) {
+          return yield* _(
+            Effect.fail(
+              new PgFailedAuth({
+                msg: 'Postgres server does not support SSL',
+                reply: sslRequestReply,
+              })
+            )
+          );
+        }
 
-      base = yield* _(socket.upgradeToSSL);
+        yield* _(Effect.logWarning('Postgres server does not support SSL'));
+
+        base = socket;
+      }
     } else {
       base = socket;
     }

@@ -133,6 +133,7 @@ export const make = <I extends { type: string }, O>({
     }) =>
       Effect.gen(function* (_) {
         const doneRef = yield* _(Ref.make(false));
+
         const msgs = yield* _(
           Stream.runCollect(
             Stream.repeatEffectOption(
