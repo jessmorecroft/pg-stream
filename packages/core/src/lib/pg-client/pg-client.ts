@@ -87,7 +87,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
       })
     );
 
-    const { write } = messageSocket;
+    const { write, end } = messageSocket;
 
     const read: Effect.Effect<
       never,
@@ -236,7 +236,10 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
               Stream.repeatValue(confirmed_flush_lsn),
               Schedule.fixed('1 seconds')
             )
-          )
+          ),
+          {
+            haltStrategy: 'left',
+          }
         ).pipe(
           Stream.scan(0n, (s, a) => (a > s ? a : s)),
           Stream.map((lsn): PgClientMessageTypes => {
@@ -260,7 +263,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
         const sink = messageSocket.writeSink;
 
         yield* _(Stream.run(source, sink));
-      });
+      }).pipe(Effect.scoped);
 
     const executeCommand = ({ sql }: { sql: string }) =>
       Effect.gen(function* (_) {
@@ -390,6 +393,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
       readOrFail,
       readUntilReady,
       write,
+      end,
     };
   });
 

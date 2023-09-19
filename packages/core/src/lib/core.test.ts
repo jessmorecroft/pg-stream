@@ -66,15 +66,13 @@ describe('core', () => {
         )
       );
 
-      Effect.runFork(
-        pg1
-          .recvlogical({
-            slotName: 'test_slot',
-            publicationNames: ['test_pub'],
-            key: (data) => ('name' in data ? data.name : ''),
-            process: (data) => hub.publish(data),
-          })
-          .pipe(Effect.scoped)
+      const fibre2 = Effect.runFork(
+        pg1.recvlogical({
+          slotName: 'test_slot',
+          publicationNames: ['test_pub'],
+          key: (data) => ('name' in data ? data.name : ''),
+          process: (data) => hub.publish(data),
+        })
       );
 
       yield* _(
@@ -90,7 +88,15 @@ describe('core', () => {
         })
       );
 
-      return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
+      return yield* _(
+        Effect.zipLeft(
+          fibre.await().pipe(Effect.flatMap(identity)),
+          Effect.zip(
+            pg1.end.pipe(Effect.flatMap(() => pgPool.invalidate(pg1))),
+            fibre2.await()
+          )
+        )
+      );
     });
 
     const results = await Effect.runPromise(program.pipe(Effect.scoped));
