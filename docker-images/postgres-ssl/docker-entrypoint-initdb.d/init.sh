@@ -8,6 +8,10 @@ chmod og-rwx ${PGDATA}/ssl/server.key
 chown -R postgres ${PGDATA}/ssl
 
 cat <<EOS >> ${PGDATA}/postgresql.conf
+wal_level = logical			# minimal, replica, or logical
+max_wal_senders = 10		# max number of walsender processes
+max_replication_slots = 10	# max number of replication slots
+
 ssl = on
 ssl_cert_file = '${PGDATA}/ssl/server.crt'
 ssl_key_file = '${PGDATA}/ssl/server.key'

@@ -135,13 +135,15 @@ it.each<Options>([
       return yield* _(
         client.executeQuery({
           sql: 'select * from greeting',
-          schema: Schema.struct({
-            column1: Schema.string,
-            column2: Schema.number,
-            column3: Schema.DateFromSelf,
-            column4: Schema.bigint,
-            column5: Schema.array(Schema.number),
-          }),
+          schema: Schema.nonEmptyArray(
+            Schema.struct({
+              column1: Schema.string,
+              column2: Schema.number,
+              column3: Schema.DateFromSelf,
+              column4: Schema.bigintFromSelf,
+              column5: Schema.array(Schema.number),
+            })
+          ),
         })
       );
     });

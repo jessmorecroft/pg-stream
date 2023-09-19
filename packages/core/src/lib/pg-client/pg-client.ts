@@ -1,9 +1,19 @@
-import { Data, Effect, pipe } from 'effect';
+import {
+  Chunk,
+  Data,
+  Effect,
+  Either,
+  Option,
+  Schedule,
+  Stream,
+  pipe,
+} from 'effect';
 import * as E from 'fp-ts/Either';
 import * as P from 'parser-ts/Parser';
 import {
   DataRow,
   ErrorResponse,
+  PgClientMessageTypes,
   RowDescription,
   pgSSLRequestResponse,
   pgServerMessageParser,
@@ -22,6 +32,12 @@ import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
 import * as Schema from '@effect/schema/Schema';
 import { formatErrors } from '@effect/schema/TreeFormatter';
+import { walLsnFromString } from '../util/wal-lsn-from-string';
+import {
+  PgOutputDecoratedMessageTypes,
+  TableInfoMap,
+  transformLogData,
+} from './transform-log-data';
 
 export interface Options {
   host: string;
@@ -30,6 +46,7 @@ export interface Options {
   username: string;
   password: string;
   useSSL?: boolean;
+  replication?: boolean;
 }
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
@@ -108,6 +125,143 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
         isLast: ({ type }) => type === 'ReadyForQuery',
       });
 
+    const recvlogical = <R, E>({
+      slotName,
+      publicationNames,
+      process,
+      key,
+    }: {
+      slotName: string;
+      publicationNames: string[];
+      process: (
+        data: PgOutputDecoratedMessageTypes
+      ) => Effect.Effect<R, E, void>;
+      key: (data: PgOutputDecoratedMessageTypes) => string;
+    }) =>
+      Effect.gen(function* (_) {
+        const [{ confirmed_flush_lsn }] = yield* _(
+          executeQuery({
+            sql: `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = '${slotName}'`,
+            schema: Schema.tuple(
+              Schema.struct({
+                confirmed_flush_lsn: walLsnFromString,
+              })
+            ),
+          })
+        );
+
+        yield* _(
+          write({
+            type: 'Query',
+            sql: `START_REPLICATION SLOT ${slotName} LOGICAL ${yield* _(
+              Schema.encode(walLsnFromString)(confirmed_flush_lsn)
+            )} (proto_version '1', publication_names '${publicationNames.join(
+              ','
+            )}')`,
+          })
+        );
+
+        // wait for this before streaming
+        yield* _(readOrFail('CopyBothResponse'));
+
+        const messages = Stream.fromPull(
+          Effect.succeed(
+            read.pipe(
+              Effect.mapError((error) => {
+                if (error._tag === 'NoMoreMessagesError') {
+                  return Option.none();
+                }
+                return Option.some(error);
+              }),
+              Effect.map(Chunk.of)
+            )
+          )
+        );
+
+        const [logData, other] = yield* _(
+          messages.pipe(
+            Stream.filter(hasTypeOf('CopyData')),
+            Stream.partitionEither(({ payload }) => {
+              return hasTypeOf('XLogData')(payload)
+                ? Effect.succeed(Either.left(payload))
+                : Effect.succeed(Either.right(payload));
+            })
+          )
+        );
+
+        const wals: [bigint, boolean][] = [];
+
+        const source = Stream.merge(
+          logData.pipe(
+            Stream.tap((cd) => {
+              wals.push([cd.walStart, false]);
+              return Effect.unit;
+            }),
+            Stream.mapAccumEffect(new Map(), (s: TableInfoMap, log) =>
+              transformLogData(s, log).pipe(
+                Effect.map((msg) => [s, [msg, log] as const])
+              )
+            ),
+            Stream.mapEffect(
+              ([msg, log]) => Effect.map(process(msg), () => log.walStart),
+              {
+                key: ([msg]) => key(msg),
+              }
+            ),
+            Stream.flatMap((wal) => {
+              const item = wals.find((_) => _[0] === wal);
+              if (item) {
+                item[1] = true;
+              }
+              let next: bigint | undefined;
+              while (wals.length > 0) {
+                if (wals[0][1]) {
+                  next = wals.shift()?.[0];
+                } else {
+                  break;
+                }
+              }
+              if (next) {
+                return Stream.succeed(next);
+              }
+              return Stream.empty;
+            })
+          ),
+          Stream.merge(
+            other.pipe(
+              Stream.filter((_) => _.replyNow && _.type === 'XKeepAlive'),
+              Stream.map(() => confirmed_flush_lsn)
+            ),
+            Stream.schedule(
+              Stream.repeatValue(confirmed_flush_lsn),
+              Schedule.fixed('1 seconds')
+            )
+          )
+        ).pipe(
+          Stream.scan(0n, (s, a) => (a > s ? a : s)),
+          Stream.map((lsn): PgClientMessageTypes => {
+            const timeStamp =
+              BigInt(new Date().getTime() - Date.UTC(2000, 0, 1)) * 1000n;
+
+            return {
+              type: 'CopyData',
+              payload: {
+                type: 'XStatusUpdate',
+                lastWalWrite: lsn,
+                lastWalFlush: lsn,
+                lastWalApply: 0n,
+                replyNow: false,
+                timeStamp,
+              },
+            };
+          })
+        );
+
+        const sink = messageSocket.writeSink;
+
+        yield* _(Stream.run(source, sink));
+      });
+
     const executeCommand = ({ sql }: { sql: string }) =>
       Effect.gen(function* (_) {
         yield* _(messageSocket.write({ type: 'Query', sql }));
@@ -128,16 +282,18 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
           )
         );
 
+        yield* _(Effect.log(commandTag));
+
         return commandTag;
       });
 
-    const executeQuery = <F, T>({
+    const executeQuery = <F, T, A extends readonly T[]>({
       sql,
       schema,
       options,
     }: {
       sql: string;
-      schema: Schema.Schema<F, T>;
+      schema: Schema.Schema<F, A>;
       options?: MakeValueTypeParserOptions;
     }) =>
       Effect.gen(function* (_) {
@@ -181,7 +337,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
             return { ...acc, [name]: input };
           }, {} as object);
 
-        const rows = yield* _(
+        const { rows, commandTag } = yield* _(
           readUntilReady(
             pipe(
               item,
@@ -195,11 +351,18 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
                   P.many
                 )
               ),
-              P.chainFirst(() =>
+              P.bindTo('rows'),
+              P.bind('commandTag', () =>
                 pipe(
                   item,
                   P.filter(isCommandComplete),
-                  P.chain(() => pipe(item, P.filter(isReadyForQuery))),
+                  P.map(({ commandTag }) => commandTag)
+                )
+              ),
+              P.chainFirst(() =>
+                pipe(
+                  item,
+                  P.filter(isReadyForQuery),
                   P.chain(() => P.eof())
                 )
               )
@@ -207,8 +370,10 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
           )
         );
 
+        yield* _(Effect.log(commandTag));
+
         return yield* _(
-          Schema.parse(Schema.array(schema))(rows).pipe(
+          Schema.parse(schema)(rows).pipe(
             Effect.mapError(
               (pe) => new PgParseError({ message: formatErrors(pe.errors) })
             ),
@@ -220,6 +385,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
     return {
       executeQuery,
       executeCommand,
+      recvlogical,
       read,
       readOrFail,
       readUntilReady,
@@ -232,11 +398,13 @@ const startup = ({
   database,
   username,
   password,
+  replication,
 }: {
   socket: PgSocket;
   database: string;
   username: string;
   password: string;
+  replication?: boolean;
 }) =>
   Effect.gen(function* (_) {
     const { readOrFail, readUntilReady, write } = socket;
@@ -251,6 +419,12 @@ const startup = ({
         value: username,
       },
     ];
+    if (replication) {
+      parameters.push({
+        name: 'replication',
+        value: 'database',
+      });
+    }
     yield* _(
       write({
         type: 'StartupMessage',

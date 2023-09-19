@@ -12,7 +12,7 @@ export const listen = <T extends EventEmitter, A, E, B>({
   onEvent: (_: A) => Effect.Effect<never, E, B>;
   get: (emitter: T) => Option.Option<A>;
 }) =>
-  Effect.asyncInterrupt<never, E, B>((cb, signal) => {
+  Effect.async<never, E, B>((cb, signal) => {
     const fn = (_: A) => cb(onEvent(_));
     const _ = get(emitter);
     if (Option.isSome(_)) {
