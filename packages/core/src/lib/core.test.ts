@@ -1,4 +1,4 @@
-import { Chunk, Deferred, Effect, Hub, Queue, Stream, identity } from 'effect';
+import { Chunk, Deferred, Effect, Queue, Stream, identity } from 'effect';
 import { makePgPool } from './core';
 import { describe, it, expect } from 'vitest';
 import * as Schema from '@effect/schema/Schema';
@@ -44,34 +44,23 @@ describe('core', () => {
         })
       );
 
-      const hub = yield* _(Hub.unbounded<PgOutputDecoratedMessageTypes>());
-
-      const listening = yield* _(Deferred.make<never, void>());
+      const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
 
       const fibre = Effect.runFork(
         Effect.race(
-          Stream.fromHub(hub, { scoped: true }).pipe(
-            Effect.tap(() => Deferred.complete(listening, Effect.unit)),
-            Effect.flatMap((_) =>
-              _.pipe(
-                Stream.filter(({ type }) => type === 'Insert'),
-                Stream.take(3),
-                Stream.runCollect,
-                Effect.map(Chunk.toReadonlyArray)
-              )
-            ),
-            Effect.scoped
+          Stream.fromQueue(queue).pipe(
+            Stream.filter(({ type }) => type === 'Insert'),
+            Stream.take(3),
+            Stream.runCollect,
+            Effect.map(Chunk.toReadonlyArray)
           ),
-          Deferred.await(listening).pipe(
-            Effect.flatMap(() =>
-              pg1.recvlogical({
-                slotName: 'test_slot',
-                publicationNames: ['test_pub'],
-                process: (data) => hub.publish(data),
-              })
-            ),
-            Effect.flatMap(() => Effect.never)
-          )
+          pg1
+            .recvlogical({
+              slotName: 'test_slot',
+              publicationNames: ['test_pub'],
+              process: (data) => queue.offer(data),
+            })
+            .pipe(Effect.flatMap(() => Effect.never))
         )
       );
 
