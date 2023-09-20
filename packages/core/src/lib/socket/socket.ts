@@ -42,14 +42,15 @@ export const onError: (
     get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
   });
 
-const onClose: (socket: net.Socket) => Effect.Effect<never, never, void> = (
+const onFinish: (socket: net.Socket) => Effect.Effect<never, never, void> = (
   socket
 ) =>
   listen({
     emitter: socket,
-    event: 'close',
+    event: 'finish',
     onEvent: () => Effect.unit,
-    get: (_) => (_.closed ? Option.some<void>(undefined) : Option.none()),
+    get: (_) =>
+      _.writableFinished ? Option.some<void>(undefined) : Option.none(),
   });
 
 export const onSecureConnect: (
@@ -65,13 +66,15 @@ export const onSecureConnect: (
 export const makeBaseSocket = (socket: net.Socket) =>
   Effect.gen(function* (_) {
     const end = Effect.async<never, never, void>((cb) => {
-      if (socket.closed || socket.errored || socket.writableEnded) {
+      if (socket.errored || socket.writableFinished) {
         cb(Effect.unit);
         return;
       }
-      socket.end();
+      if (!socket.writableEnded) {
+        socket.end();
+      }
       cb(
-        Effect.raceAll([onClose(socket), onError(socket)]).pipe(Effect.ignore)
+        Effect.raceAll([onFinish(socket), onError(socket)]).pipe(Effect.ignore)
       );
     });
 
@@ -99,7 +102,7 @@ const tlsConnect = (socket: net.Socket) =>
 export const make = ({ host, port }: Options) =>
   Effect.acquireRelease(
     Effect.suspend(() => {
-      const socket = net.connect({ host, port });
+      const socket = net.connect({ host, port, allowHalfOpen: false });
       return Effect.raceAll([onConnect(socket), onError(socket)]).pipe(
         Effect.flatMap(() => makeBaseSocket(socket)),
         Effect.flatMap((baseSocket) =>

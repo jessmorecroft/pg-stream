@@ -1,4 +1,4 @@
-import { Chunk, Data, Effect, Option, Ref, Stream } from 'effect';
+import { Chunk, Data, Effect, Option, Ref, Scope, Stream } from 'effect';
 import * as net from 'net';
 import * as tls from 'tls';
 import * as socket from './socket';
@@ -63,11 +63,11 @@ const onError: (
   });
 
 const onConnection = (server: net.Server) =>
-  Stream.asyncScoped<never, never, net.Socket>((cb) => {
-    const fn = (socket: net.Socket) => cb(Effect.succeed(Chunk.of(socket)));
+  Stream.asyncScoped<Scope.Scope, never, net.Socket>((emit) => {
+    const fn = (socket: net.Socket) => emit(Effect.succeed(Chunk.of(socket)));
     server.on('connection', fn);
     return Effect.addFinalizer(() => {
-      server.removeListener('connection', fn);
+      server.off('connection', fn);
       return Effect.async<never, never, void>((cb) => {
         server.close((error) => {
           if (error) {

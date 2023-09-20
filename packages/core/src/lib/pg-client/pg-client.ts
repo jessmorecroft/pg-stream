@@ -87,7 +87,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
       })
     );
 
-    const { write, end } = messageSocket;
+    const { write } = messageSocket;
 
     const read: Effect.Effect<
       never,
@@ -136,11 +136,11 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
       process: (
         data: PgOutputDecoratedMessageTypes
       ) => Effect.Effect<R, E, void>;
-      key: (data: PgOutputDecoratedMessageTypes) => string;
+      key?: (data: PgOutputDecoratedMessageTypes) => string;
     }) =>
       Effect.gen(function* (_) {
-        const [{ confirmed_flush_lsn }] = yield* _(
-          executeQuery({
+        const [{ confirmed_flush_lsn: startLsn }] = yield* _(
+          query({
             sql: `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = '${slotName}'`,
             schema: Schema.tuple(
               Schema.struct({
@@ -154,7 +154,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
           write({
             type: 'Query',
             sql: `START_REPLICATION SLOT ${slotName} LOGICAL ${yield* _(
-              Schema.encode(walLsnFromString)(confirmed_flush_lsn)
+              Schema.encode(walLsnFromString)(startLsn)
             )} (proto_version '1', publication_names '${publicationNames.join(
               ','
             )}')`,
@@ -178,7 +178,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
           )
         );
 
-        const [logData, other] = yield* _(
+        const [logData, keepalives] = yield* _(
           messages.pipe(
             Stream.filter(hasTypeOf('CopyData')),
             Stream.partitionEither(({ payload }) => {
@@ -191,57 +191,59 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
 
         const wals: [bigint, boolean][] = [];
 
-        const source = Stream.merge(
-          logData.pipe(
-            Stream.tap((cd) => {
-              wals.push([cd.walStart, false]);
-              return Effect.unit;
-            }),
-            Stream.mapAccumEffect(new Map(), (s: TableInfoMap, log) =>
-              transformLogData(s, log).pipe(
-                Effect.map((msg) => [s, [msg, log] as const])
-              )
-            ),
-            Stream.mapEffect(
-              ([msg, log]) => Effect.map(process(msg), () => log.walStart),
-              {
-                key: ([msg]) => key(msg),
-              }
-            ),
-            Stream.flatMap((wal) => {
-              const item = wals.find((_) => _[0] === wal);
-              if (item) {
-                item[1] = true;
-              }
-              let next: bigint | undefined;
-              while (wals.length > 0) {
-                if (wals[0][1]) {
-                  next = wals.shift()?.[0];
-                } else {
-                  break;
-                }
-              }
-              if (next) {
-                return Stream.succeed(next);
-              }
-              return Stream.empty;
-            })
-          ),
-          Stream.merge(
-            other.pipe(
-              Stream.filter((_) => _.replyNow && _.type === 'XKeepAlive'),
-              Stream.map(() => confirmed_flush_lsn)
-            ),
-            Stream.schedule(
-              Stream.repeatValue(confirmed_flush_lsn),
-              Schedule.fixed('1 seconds')
+        const dataStream = logData.pipe(
+          Stream.tap((log) => {
+            wals.push([log.walStart, false]);
+            return Effect.unit;
+          }),
+          Stream.mapAccumEffect(new Map(), (s: TableInfoMap, log) =>
+            transformLogData(s, log).pipe(
+              Effect.map((msg) => [s, [msg, log] as const])
             )
           ),
-          {
-            haltStrategy: 'left',
-          }
-        ).pipe(
-          Stream.scan(0n, (s, a) => (a > s ? a : s)),
+          Stream.mapEffect(
+            ([msg, log]) => Effect.map(process(msg), () => log.walStart),
+            {
+              key: ([msg]) =>
+                key?.(msg) ??
+                ('namespace' in msg ? `${msg.namespace}.${msg.name}` : ''),
+            }
+          ),
+          Stream.flatMap((wal) => {
+            const item = wals.find((_) => _[0] === wal);
+            if (item) {
+              item[1] = true;
+            }
+            let next: bigint | undefined;
+            while (wals.length > 0) {
+              if (wals[0][1]) {
+                next = wals.shift()?.[0];
+              } else {
+                break;
+              }
+            }
+            if (next) {
+              return Stream.succeed(next);
+            }
+            return Stream.empty;
+          })
+        );
+
+        const keepaliveStream = Stream.merge(
+          keepalives.pipe(
+            Stream.filter((_) => _.replyNow && _.type === 'XKeepAlive'),
+            Stream.map(() => startLsn)
+          ),
+          Stream.schedule(
+            Stream.repeatValue(startLsn),
+            Schedule.fixed('5 seconds')
+          )
+        );
+
+        const source = Stream.merge(dataStream, keepaliveStream, {
+          haltStrategy: 'left',
+        }).pipe(
+          Stream.scan(startLsn, (s, a) => (a > s ? a : s)),
           Stream.map((lsn): PgClientMessageTypes => {
             const timeStamp =
               BigInt(new Date().getTime() - Date.UTC(2000, 0, 1)) * 1000n;
@@ -265,7 +267,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
         yield* _(Stream.run(source, sink));
       }).pipe(Effect.scoped);
 
-    const executeCommand = ({ sql }: { sql: string }) =>
+    const command = ({ sql }: { sql: string }) =>
       Effect.gen(function* (_) {
         yield* _(messageSocket.write({ type: 'Query', sql }));
 
@@ -290,7 +292,7 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
         return commandTag;
       });
 
-    const executeQuery = <F, T, A extends readonly T[]>({
+    const query = <F, T, A extends readonly T[]>({
       sql,
       schema,
       options,
@@ -386,14 +388,13 @@ const makePgSocket = ({ socket }: { socket: BaseSocket }) =>
       });
 
     return {
-      executeQuery,
-      executeCommand,
+      query,
+      command,
       recvlogical,
       read,
       readOrFail,
       readUntilReady,
       write,
-      end,
     };
   });
 
