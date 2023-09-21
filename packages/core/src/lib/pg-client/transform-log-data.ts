@@ -80,8 +80,10 @@ export type TableInfoMap = Map<
   }
 >;
 
-export class PgOutputStateError extends Data.TaggedClass('PgOutputStateError')<{
-  msg: string;
+export class TableInfoNotFoundError extends Data.TaggedClass(
+  'TableInfoNotFoundError'
+)<{
+  key: unknown;
 }> {}
 
 const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
@@ -114,7 +116,11 @@ const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
 export const transformLogData = (
   tableInfo: TableInfoMap,
   logData: XLogData
-): Effect.Effect<never, PgOutputStateError, PgOutputDecoratedMessageTypes> => {
+): Effect.Effect<
+  never,
+  TableInfoNotFoundError,
+  PgOutputDecoratedMessageTypes
+> => {
   const xlog = logData.payload;
   switch (xlog.type) {
     case 'Relation': {
@@ -142,9 +148,7 @@ export const transformLogData = (
       const { type, relationId } = xlog;
       const relation = tableInfo.get(relationId);
       if (!relation) {
-        return Effect.fail(
-          new PgOutputStateError({ msg: `Relation ${relationId} is unknown.` })
-        );
+        return Effect.fail(new TableInfoNotFoundError({ key: relationId }));
       }
       const { namespace, name, colParsers } = relation;
       const newRecord = convertTupleData(xlog.newRecord, colParsers);
@@ -161,9 +165,7 @@ export const transformLogData = (
       const { type, relationId } = xlog;
       const relation = tableInfo.get(relationId);
       if (!relation) {
-        return Effect.fail(
-          new PgOutputStateError({ msg: `Relation ${relationId} is unknown.` })
-        );
+        return Effect.fail(new TableInfoNotFoundError({ key: relationId }));
       }
       const { namespace, name, colParsers } = relation;
       const newRecord = convertTupleData(xlog.newRecord, colParsers);
@@ -195,9 +197,7 @@ export const transformLogData = (
       const { type, relationId } = xlog;
       const relation = tableInfo.get(relationId);
       if (!relation) {
-        return Effect.fail(
-          new PgOutputStateError({ msg: `Relation ${relationId} is unknown.` })
-        );
+        return Effect.fail(new TableInfoNotFoundError({ key: relationId }));
       }
       const { namespace, name, colParsers } = relation;
       const oldKey = pipe(
@@ -242,8 +242,8 @@ export const transformLogData = (
       });
       if (notFound.length > 0) {
         return Effect.fail(
-          new PgOutputStateError({
-            msg: `${notFound.length} relation(s) unknown: ${notFound}`,
+          new TableInfoNotFoundError({
+            key: notFound,
           })
         );
       }
