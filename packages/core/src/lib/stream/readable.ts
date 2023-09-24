@@ -231,15 +231,14 @@ export const read: <T>(
 };
 
 export const readStream = <E, T>(
-  read: Effect.Effect<never, E | NoMoreMessagesError, T>
+  read: Effect.Effect<never, E, T>,
+  isDone: (e: E) => boolean
 ): Stream.Stream<never, E, T> =>
   Stream.fromPull(
     Effect.succeed(
       read.pipe(
         Effect.map(Chunk.of),
-        Effect.mapError((e) =>
-          e._tag === 'NoMoreMessagesError' ? Option.none() : Option.some(e)
-        )
+        Effect.mapError((e) => (isDone(e) ? Option.none() : Option.some(e)))
       )
     )
   );
