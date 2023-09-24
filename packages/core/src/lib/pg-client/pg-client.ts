@@ -1,4 +1,4 @@
-import { Data, Effect, Either, Schedule, Scope, Stream, pipe } from 'effect';
+import { Data, Effect, Either, Schedule, Stream, pipe } from 'effect';
 import * as E from 'fp-ts/Either';
 import * as P from 'parser-ts/Parser';
 import {
@@ -8,6 +8,7 @@ import {
   NoticeResponse,
   PgClientMessageTypes,
   RowDescription,
+  XLogData,
   pgSSLRequestResponse,
   pgServerMessageParser,
 } from '../pg-protocol/message-parsers';
@@ -25,6 +26,8 @@ import { formatErrors } from '@effect/schema/TreeFormatter';
 import { walLsnFromString } from '../util/wal-lsn-from-string';
 import { startup } from './startup';
 import {
+  DecoratedBegin,
+  NoTransactionContextError,
   PgOutputDecoratedMessageTypes,
   TableInfoMap,
   TableInfoNotFoundError,
@@ -51,6 +54,12 @@ export interface Options {
   password: string;
   useSSL?: boolean;
   replication?: boolean;
+}
+
+export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
+  filter(msg: PgOutputDecoratedMessageTypes): msg is T;
+  key?(msg: T): string;
+  process(msg: T): Effect.Effect<never, E, void>;
 }
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
@@ -281,29 +290,31 @@ export const command: (
     return commandTag;
   });
 
-export const recvlogical: (
-  socket: Duplex
-) => <R, E>(options: {
-  slotName: string;
-  publicationNames: string[];
-  process: (data: PgOutputDecoratedMessageTypes) => Effect.Effect<R, E, void>;
-  key?: (data: PgOutputDecoratedMessageTypes) => string;
-}) => Effect.Effect<
-  Exclude<R, Scope.Scope>,
-  | WritableError
-  | ReadableError
-  | ParseMessageError
-  | NoMoreMessagesError
-  | UnexpectedMessageError
-  | PgServerError
-  | PgParseError
-  | ParseMessageGroupError
-  | TableInfoNotFoundError
-  | E,
-  void
-> =
-  (socket) =>
-  ({ slotName, publicationNames, process, key }) =>
+export const recvlogical =
+  (socket: Duplex) =>
+  <E, T extends PgOutputDecoratedMessageTypes>({
+    slotName,
+    publicationNames,
+    processor,
+  }: {
+    slotName: string;
+    publicationNames: string[];
+    processor: XLogProcessor<E, T>;
+  }): Effect.Effect<
+    never,
+    | WritableError
+    | ReadableError
+    | ParseMessageError
+    | NoMoreMessagesError
+    | UnexpectedMessageError
+    | PgServerError
+    | PgParseError
+    | ParseMessageGroupError
+    | TableInfoNotFoundError
+    | NoTransactionContextError
+    | E,
+    void
+  > =>
     Effect.gen(function* (_) {
       const [{ confirmed_flush_lsn: startLsn }] = yield* _(
         query(socket)(
@@ -350,24 +361,62 @@ export const recvlogical: (
 
       const wals: [bigint, boolean][] = [];
 
-      const dataStream = logData.pipe(
-        Stream.tap((log) => {
-          wals.push([log.walStart, false]);
-          return Effect.unit;
-        }),
-        Stream.mapAccumEffect(new Map(), (s: TableInfoMap, log) =>
-          transformLogData(s, log).pipe(
-            Effect.map((msg) => [s, [msg, log] as const])
+      const [filtered, skipped] = yield* _(
+        logData.pipe(
+          Stream.mapAccumEffect(
+            [new Map(), undefined],
+            ([map, begin]: [TableInfoMap, DecoratedBegin | undefined], log) =>
+              transformLogData(map, log, begin).pipe(
+                Effect.map(
+                  (
+                    msg
+                  ): [
+                    [TableInfoMap, DecoratedBegin | undefined],
+                    [PgOutputDecoratedMessageTypes, XLogData]
+                  ] => [
+                    [
+                      map,
+                      msg.type === 'Begin'
+                        ? msg
+                        : msg.type !== 'Commit'
+                        ? begin
+                        : undefined,
+                    ],
+                    [msg, log],
+                  ]
+                )
+              )
+          ),
+          Stream.tap(([, log]) => {
+            wals.push([log.walStart, false]);
+            return Effect.unit;
+          }),
+          Stream.partitionEither(
+            (
+              msgAndLog
+            ): Effect.Effect<
+              never,
+              never,
+              Either.Either<[T, XLogData], XLogData>
+            > =>
+              processor.filter(msgAndLog[0])
+                ? Effect.succeed(Either.left([msgAndLog[0], msgAndLog[1]]))
+                : Effect.succeed(Either.right(msgAndLog[1]))
           )
-        ),
+        )
+      );
+
+      const dataStream = filtered.pipe(
         Stream.mapEffect(
-          ([msg, log]) => Effect.map(process(msg), () => log.walStart),
+          ([msg, log]) =>
+            Effect.map(processor.process(msg), () => log.walStart),
           {
             key: ([msg]) =>
-              key?.(msg) ??
+              processor.key?.(msg) ??
               ('namespace' in msg ? `${msg.namespace}.${msg.name}` : ''),
           }
         ),
+        Stream.merge(skipped.pipe(Stream.map((log) => log.walStart))),
         Stream.flatMap((wal) => {
           const item = wals.find((_) => _[0] === wal);
           if (item) {

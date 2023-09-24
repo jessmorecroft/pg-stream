@@ -4,6 +4,8 @@ import { describe, it, expect } from 'vitest';
 import * as Schema from '@effect/schema/Schema';
 import { walLsnFromString } from './util/wal-lsn-from-string';
 import {
+  DecoratedBegin,
+  DecoratedCommit,
   DecoratedInsert,
   PgOutputDecoratedMessageTypes,
 } from './pg-client/transform-log-data';
@@ -119,7 +121,6 @@ describe('core', () => {
       const fibre = Effect.runFork(
         Effect.race(
           Stream.fromQueue(queue).pipe(
-            Stream.filter(({ type }) => type !== 'Begin' && type !== 'Commit'),
             Stream.takeUntil(({ type }) => type === 'Delete'),
             Stream.runCollect,
             Effect.map(Chunk.toReadonlyArray)
@@ -128,7 +129,15 @@ describe('core', () => {
             .recvlogical({
               slotName: 'test_slot',
               publicationNames: ['test_pub'],
-              process: (data) => queue.offer(data),
+              processor: {
+                filter: (
+                  msg: PgOutputDecoratedMessageTypes
+                ): msg is Exclude<
+                  PgOutputDecoratedMessageTypes,
+                  DecoratedBegin | DecoratedCommit
+                > => msg.type !== 'Begin' && msg.type !== 'Commit',
+                process: (data) => queue.offer(data),
+              },
             })
             .pipe(Effect.flatMap(() => Effect.never))
         )
@@ -269,11 +278,11 @@ describe('core', () => {
 
       const pg = yield* _(pgPool.get());
 
-      yield* _(pg.command(`CREATE PUBLICATION test_pub2 FOR ALL TABLES`));
+      yield* _(pg.command('CREATE PUBLICATION test_pub2 FOR ALL TABLES'));
 
       yield* _(
         pg.query(
-          `CREATE_REPLICATION_SLOT test_slot2 LOGICAL pgoutput NOEXPORT_SNAPSHOT`,
+          'CREATE_REPLICATION_SLOT test_slot2 LOGICAL pgoutput NOEXPORT_SNAPSHOT',
           Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
@@ -282,7 +291,7 @@ describe('core', () => {
         )
       );
 
-      const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
+      const queue = yield* _(Queue.unbounded<DecoratedInsert>());
 
       const recvlogical = Effect.gen(function* (_) {
         const stop = yield* _(Deferred.make<never, void>());
@@ -294,7 +303,11 @@ describe('core', () => {
                 streamer.recvlogical({
                   slotName: 'test_slot2',
                   publicationNames: ['test_pub2'],
-                  process: (data) => queue.offer(data),
+                  processor: {
+                    filter: (msg): msg is DecoratedInsert =>
+                      msg.type === 'Insert',
+                    process: (data) => queue.offer(data),
+                  },
                 }),
                 Deferred.await(stop)
               ).pipe(Effect.tap(() => pgPool.invalidate(streamer)))
@@ -342,18 +355,20 @@ describe('core', () => {
     const results = await Effect.runPromise(program.pipe(Effect.scoped));
 
     expect(results.filter(({ type }) => type === 'Insert')).toEqual(
-      _.times(9, (num) => ({
-        name: 'test_recovery',
-        namespace: 'public',
-        newRecord: {
-          numbers: num + 1,
-        },
-        type: 'Insert',
-      }))
+      _.times(9, (num) =>
+        expect.objectContaining({
+          name: 'test_recovery',
+          namespace: 'public',
+          newRecord: {
+            numbers: num + 1,
+          },
+          type: 'Insert',
+        })
+      )
     );
   });
 
-  it.each<number>([1000])('should stream changes quickly', async (rowCount) => {
+  it.each<number>([1500])('should stream changes quickly', async (rowCount) => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
@@ -386,14 +401,11 @@ describe('core', () => {
         )
       );
 
-      const queue = yield* _(Queue.bounded<PgOutputDecoratedMessageTypes>(10));
+      const queue = yield* _(Queue.bounded<DecoratedInsert>(10));
 
       const fibre = Effect.runFork(
         Effect.raceFirst(
           Stream.fromQueue(queue).pipe(
-            Stream.filter(
-              (msg): msg is DecoratedInsert => msg.type === 'Insert'
-            ),
             Stream.scanEffect(
               { test_perf1: 0, test_perf2: 0 } as Record<string, number>,
               (prev, msg) => {
@@ -419,8 +431,11 @@ describe('core', () => {
             .recvlogical({
               slotName: 'test_slot3',
               publicationNames: ['test_pub3'],
-              process: (data) => queue.offer(data),
-              key: () => '',
+              processor: {
+                filter: (msg): msg is DecoratedInsert => msg.type === 'Insert',
+                process: (data) => queue.offer(data),
+                key: () => '',
+              },
             })
             .pipe(Effect.flatMap(() => Effect.never))
         )

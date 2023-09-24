@@ -10,6 +10,8 @@ import {
   makeValueTypeParser,
   ValueType,
   XLogData,
+  Begin,
+  Commit,
 } from '../pg-protocol';
 import * as P from 'parser-ts/Parser';
 import * as S from 'parser-ts/string';
@@ -24,9 +26,18 @@ export type DecoratedRelation = Omit<Relation, 'columns'> & {
   })[];
 };
 
+export type DecoratedBegin = Omit<Begin, 'timeStamp'> & {
+  timeStamp: Date;
+};
+
+export type DecoratedCommit = Commit & {
+  begin: DecoratedBegin;
+};
+
 export type DecoratedInsert = Omit<Insert, 'relationId' | 'newRecord'> & {
   namespace: string;
   name: string;
+  begin: DecoratedBegin;
   newRecord: Record<string, ValueType | null>;
 };
 
@@ -36,6 +47,7 @@ export type DecoratedUpdate = Omit<
 > & {
   namespace: string;
   name: string;
+  begin: DecoratedBegin;
   oldKey?: Record<string, ValueType | null>;
   oldRecord?: Record<string, ValueType | null>;
   newRecord: Record<string, ValueType | null>;
@@ -47,6 +59,7 @@ export type DecoratedDelete = Omit<
 > & {
   namespace: string;
   name: string;
+  begin: DecoratedBegin;
   oldKey?: Record<string, ValueType | null>;
   oldRecord?: Record<string, ValueType | null>;
 };
@@ -61,8 +74,10 @@ export type DecoratedTruncate = Omit<Truncate, 'relationIds'> & {
 export type PgOutputDecoratedMessageTypes =
   | Exclude<
       PgOutputMessageTypes,
-      Relation | Insert | Update | Delete | Truncate
+      Begin | Commit | Relation | Insert | Update | Delete | Truncate
     >
+  | DecoratedBegin
+  | DecoratedCommit
   | DecoratedRelation
   | DecoratedInsert
   | DecoratedUpdate
@@ -84,6 +99,12 @@ export class TableInfoNotFoundError extends Data.TaggedClass(
   'TableInfoNotFoundError'
 )<{
   key: unknown;
+}> {}
+
+export class NoTransactionContextError extends Data.TaggedClass(
+  'NoTransactionContexError'
+)<{
+  logData: XLogData;
 }> {}
 
 const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
@@ -115,14 +136,34 @@ const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
 
 export const transformLogData = (
   tableInfo: TableInfoMap,
-  logData: XLogData
+  logData: XLogData,
+  begin?: DecoratedBegin
 ): Effect.Effect<
   never,
-  TableInfoNotFoundError,
+  TableInfoNotFoundError | NoTransactionContextError,
   PgOutputDecoratedMessageTypes
 > => {
   const xlog = logData.payload;
   switch (xlog.type) {
+    case 'Begin': {
+      const begin: DecoratedBegin = {
+        ...xlog,
+        timeStamp: new Date(
+          Number(xlog.timeStamp / 1000n) + Date.UTC(2000, 0, 1)
+        ),
+      };
+      return Effect.succeed(begin);
+    }
+    case 'Commit': {
+      if (!begin) {
+        return Effect.fail(new NoTransactionContextError({ logData }));
+      }
+      const commit: DecoratedCommit = {
+        ...xlog,
+        begin,
+      };
+      return Effect.succeed(commit);
+    }
     case 'Relation': {
       const columns = xlog.columns.map((col) => {
         const dataTypeName = getTypeName(col.dataTypeId);
@@ -145,6 +186,9 @@ export const transformLogData = (
       return Effect.succeed(relation);
     }
     case 'Insert': {
+      if (!begin) {
+        return Effect.fail(new NoTransactionContextError({ logData }));
+      }
       const { type, relationId } = xlog;
       const relation = tableInfo.get(relationId);
       if (!relation) {
@@ -155,6 +199,7 @@ export const transformLogData = (
       const insert: DecoratedInsert = {
         type,
         namespace,
+        begin,
         name,
         newRecord,
       };
@@ -162,6 +207,9 @@ export const transformLogData = (
       return Effect.succeed(insert);
     }
     case 'Update': {
+      if (!begin) {
+        return Effect.fail(new NoTransactionContextError({ logData }));
+      }
       const { type, relationId } = xlog;
       const relation = tableInfo.get(relationId);
       if (!relation) {
@@ -187,6 +235,7 @@ export const transformLogData = (
         type,
         namespace,
         name,
+        begin,
         oldKey,
         oldRecord,
         newRecord,
@@ -194,6 +243,9 @@ export const transformLogData = (
       return Effect.succeed(update);
     }
     case 'Delete': {
+      if (!begin) {
+        return Effect.fail(new NoTransactionContextError({ logData }));
+      }
       const { type, relationId } = xlog;
       const relation = tableInfo.get(relationId);
       if (!relation) {
@@ -218,6 +270,7 @@ export const transformLogData = (
         type,
         namespace,
         name,
+        begin,
         oldKey,
         oldRecord,
       };
