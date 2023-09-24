@@ -5,13 +5,16 @@ import { createHash, randomBytes } from 'crypto';
 import { Hi, hmacSha256, sha256, xorBuffers } from './util';
 import {
   PgFailedAuth,
-  PgSocket,
   isBackendKeyData,
   isParameterStatus,
   isReadyForQuery,
   item,
+  write,
+  readOrFail,
+  readUntilReady,
 } from './pg-client';
-import { hasTypeOf } from '../socket/message-socket';
+import { hasTypeOf } from '../stream';
+import { Duplex } from 'stream';
 
 export const startup = ({
   socket,
@@ -20,15 +23,13 @@ export const startup = ({
   password,
   replication,
 }: {
-  socket: PgSocket;
+  socket: Duplex;
   database: string;
   username: string;
   password: string;
   replication?: boolean;
 }) =>
   Effect.gen(function* (_) {
-    const { readOrFail, readUntilReady, write } = socket;
-
     const parameters = [
       {
         name: 'database',
@@ -46,7 +47,7 @@ export const startup = ({
       });
     }
     yield* _(
-      write({
+      write(socket)({
         type: 'StartupMessage',
         protocolVersion: 196608,
         parameters,
@@ -54,7 +55,7 @@ export const startup = ({
     );
 
     const reply = yield* _(
-      readOrFail(
+      readOrFail(socket)(
         'AuthenticationCleartextPassword',
         'AuthenticationMD5Password',
         'AuthenticationSASL'
@@ -64,7 +65,7 @@ export const startup = ({
     // CLEARTEXT PASSWORD
     if (reply.type === 'AuthenticationCleartextPassword') {
       yield* _(
-        write({
+        write(socket)({
           type: 'PasswordMessage',
           password,
         })
@@ -72,7 +73,7 @@ export const startup = ({
       // MD5 HASHED PASSWORD
     } else if (reply.type === 'AuthenticationMD5Password') {
       yield* _(
-        write({
+        write(socket)({
           type: 'PasswordMessage',
           password: createHash('md5')
             .update(
@@ -107,14 +108,16 @@ export const startup = ({
       const clientFirstMessage = `${clientFirstMessageHeader}${clientFirstMessageBody}`;
 
       yield* _(
-        write({
+        write(socket)({
           type: 'SASLInitialResponse',
           mechanism,
           clientFirstMessage,
         })
       );
 
-      const saslContinue = yield* _(readOrFail('AuthenticationSASLContinue'));
+      const saslContinue = yield* _(
+        readOrFail(socket)('AuthenticationSASLContinue')
+      );
 
       const { iterationCount, salt, nonce, serverFirstMessage } = saslContinue;
       if (!nonce.startsWith(clientNonce)) {
@@ -142,9 +145,9 @@ export const startup = ({
       const clientFinalMessage =
         clientFinalMessageWithoutProof + ',p=' + clientProof;
 
-      yield* _(write({ type: 'SASLResponse', clientFinalMessage }));
+      yield* _(write(socket)({ type: 'SASLResponse', clientFinalMessage }));
 
-      const saslFinal = yield* _(readOrFail('AuthenticationSASLFinal'));
+      const saslFinal = yield* _(readOrFail(socket)('AuthenticationSASLFinal'));
 
       if (
         serverSignature.compare(
@@ -162,10 +165,10 @@ export const startup = ({
       }
     }
 
-    yield* _(readOrFail('AuthenticationOk'));
+    yield* _(readOrFail(socket)('AuthenticationOk'));
 
     const results = yield* _(
-      readUntilReady(
+      readUntilReady(socket)(
         pipe(
           item,
           P.filter(hasTypeOf('ParameterStatus', 'BackendKeyData')),

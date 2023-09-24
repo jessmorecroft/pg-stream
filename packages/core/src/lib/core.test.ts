@@ -10,7 +10,7 @@ import {
 import _ from 'lodash';
 
 describe('core', () => {
-  it('should run commands, queries', async () => {
+  it('should run commands , queries', async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
@@ -31,45 +31,35 @@ describe('core', () => {
       const pg3 = yield* _(pgPool.get());
 
       yield* _(
-        pg1.command({
-          sql: 'CREATE TABLE IF NOT EXISTS test_query ( id SERIAL, hello VARCHAR )',
-        })
+        pg1.command(
+          'CREATE TABLE IF NOT EXISTS test_query ( id SERIAL, hello VARCHAR )'
+        )
       );
 
       yield* _(
         Effect.all(
           [
-            pg1.command({
-              sql: "INSERT INTO test_query ( hello ) VALUES ('cya')",
-            }),
-            pg2.command({
-              sql: "INSERT INTO test_query ( hello ) VALUES ('goodbye')",
-            }),
-            pg3.command({
-              sql: "INSERT INTO test_query ( hello ) VALUES ('adios')",
-            }),
+            pg1.command("INSERT INTO test_query ( hello ) VALUES ('cya')"),
+            pg2.command("INSERT INTO test_query ( hello ) VALUES ('goodbye')"),
+            pg3.command("INSERT INTO test_query ( hello ) VALUES ('adios')"),
           ],
           { concurrency: 'unbounded' }
         )
       );
 
       const rows = yield* _(
-        pg1.query({
-          sql: 'SELECT * FROM test_query',
-          schema: Schema.nonEmptyArray(
+        pg1.query(
+          'SELECT * FROM test_query',
+          Schema.nonEmptyArray(
             Schema.struct({
               id: Schema.number,
               hello: Schema.string,
             })
-          ),
-        })
+          )
+        )
       );
 
-      yield* _(
-        pg1.command({
-          sql: 'DROP TABLE test_query',
-        })
-      );
+      yield* _(pg1.command('DROP TABLE test_query'));
 
       return rows;
     });
@@ -111,21 +101,17 @@ describe('core', () => {
       const pg1 = yield* _(pgPool.get());
       const pg2 = yield* _(pgPool.get());
 
-      yield* _(
-        pg1.command({
-          sql: 'CREATE PUBLICATION test_pub FOR ALL TABLES',
-        })
-      );
+      yield* _(pg1.command('CREATE PUBLICATION test_pub FOR ALL TABLES'));
 
       yield* _(
-        pg1.query({
-          sql: 'CREATE_REPLICATION_SLOT test_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
-          schema: Schema.tuple(
+        pg1.query(
+          'CREATE_REPLICATION_SLOT test_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
             })
-          ),
-        })
+          )
+        )
       );
 
       const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
@@ -149,42 +135,27 @@ describe('core', () => {
       );
 
       yield* _(
-        pg2.command({
-          sql: `CREATE TABLE IF NOT EXISTS test_replication
-                 (id INTEGER PRIMARY KEY,
-                  word VARCHAR NOT NULL,
-                  flag BOOLEAN,
-                  matrix INT[][],
-                  blob JSON)`,
-        })
+        pg2.command(`CREATE TABLE IF NOT EXISTS test_replication
+                    (id INTEGER PRIMARY KEY,
+                     word VARCHAR NOT NULL,
+                     flag BOOLEAN,
+                     matrix INT[][],
+                     blob JSON)`)
       );
       yield* _(
-        pg2.command({
-          sql: 'ALTER TABLE test_replication REPLICA IDENTITY FULL',
-        })
+        pg2.command('ALTER TABLE test_replication REPLICA IDENTITY FULL')
       );
       yield* _(
-        pg2.command({
-          sql: `INSERT INTO test_replication VALUES
+        pg2.command(`INSERT INTO test_replication VALUES
                  (1, 'hello', null, null, '{"meaning":[42]}'),
-                 (2, 'gday', true, array[array[1,2,3], array[4,5,6]], null)`,
-        })
+                 (2, 'gday', true, array[array[1,2,3], array[4,5,6]], null)`)
       );
       yield* _(
-        pg2.command({
-          sql: "UPDATE test_replication SET word = 'hiya' WHERE id = 1",
-        })
+        pg2.command("UPDATE test_replication SET word = 'hiya' WHERE id = 1")
       );
-      yield* _(
-        pg2.command({ sql: 'DELETE FROM test_replication WHERE id = 1' })
-      );
-
-      yield* _(
-        pg2.command({
-          sql: 'DROP TABLE test_replication',
-        })
-      );
-      yield* _(pg2.command({ sql: `DROP PUBLICATION IF EXISTS test_pub` }));
+      yield* _(pg2.command('DELETE FROM test_replication WHERE id = 1'));
+      yield* _(pg2.command('DROP TABLE test_replication'));
+      yield* _(pg2.command('DROP PUBLICATION IF EXISTS test_pub'));
 
       return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
     });
@@ -298,21 +269,17 @@ describe('core', () => {
 
       const pg = yield* _(pgPool.get());
 
-      yield* _(
-        pg.command({
-          sql: `CREATE PUBLICATION test_pub2 FOR ALL TABLES`,
-        })
-      );
+      yield* _(pg.command(`CREATE PUBLICATION test_pub2 FOR ALL TABLES`));
 
       yield* _(
-        pg.query({
-          sql: `CREATE_REPLICATION_SLOT test_slot2 LOGICAL pgoutput NOEXPORT_SNAPSHOT`,
-          schema: Schema.tuple(
+        pg.query(
+          `CREATE_REPLICATION_SLOT test_slot2 LOGICAL pgoutput NOEXPORT_SNAPSHOT`,
+          Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
             })
-          ),
-        })
+          )
+        )
       );
 
       const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
@@ -342,41 +309,32 @@ describe('core', () => {
       });
 
       yield* _(
-        pg.command({
-          sql: 'CREATE TABLE IF NOT EXISTS test_recovery ( numbers INTEGER )',
-        })
+        pg.command(
+          'CREATE TABLE IF NOT EXISTS test_recovery ( numbers INTEGER )'
+        )
       );
 
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (1)' }));
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (2)' }));
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (3)' }));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (1)'));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (2)'));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (3)'));
 
       yield* _(Effect.flatMap(recvlogical, Effect.delay('1 seconds')));
 
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (4)' }));
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (5)' }));
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (6)' }));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (4)'));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (5)'));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (6)'));
 
       yield* _(Effect.flatMap(recvlogical, Effect.delay('1 seconds')));
 
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (7)' }));
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (8)' }));
-      yield* _(pg.command({ sql: 'INSERT INTO test_recovery VALUES (9)' }));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (7)'));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (8)'));
+      yield* _(pg.command('INSERT INTO test_recovery VALUES (9)'));
 
       yield* _(Effect.flatMap(recvlogical, Effect.delay('1 seconds')));
 
-      yield* _(
-        pg.command({
-          sql: 'DROP TABLE test_recovery',
-        })
-      );
-      yield* _(pg.command({ sql: `DROP PUBLICATION IF EXISTS test_pub2` }));
-
-      yield* _(
-        pg.command({
-          sql: 'DROP_REPLICATION_SLOT test_slot2',
-        })
-      );
+      yield* _(pg.command('DROP TABLE test_recovery'));
+      yield* _(pg.command('DROP PUBLICATION IF EXISTS test_pub2'));
+      yield* _(pg.command('DROP_REPLICATION_SLOT test_slot2'));
 
       return yield* _(queue.takeAll().pipe(Effect.map(Chunk.toReadonlyArray)));
     });
@@ -415,21 +373,17 @@ describe('core', () => {
       const pg1 = yield* _(pgPool.get());
       const pg2 = yield* _(pgPool.get());
 
-      yield* _(
-        pg1.command({
-          sql: 'CREATE PUBLICATION test_pub3 FOR ALL TABLES',
-        })
-      );
+      yield* _(pg1.command('CREATE PUBLICATION test_pub3 FOR ALL TABLES'));
 
       yield* _(
-        pg1.query({
-          sql: 'CREATE_REPLICATION_SLOT test_slot3 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
-          schema: Schema.tuple(
+        pg1.query(
+          'CREATE_REPLICATION_SLOT test_slot3 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
             })
-          ),
-        })
+          )
+        )
       );
 
       const queue = yield* _(Queue.bounded<PgOutputDecoratedMessageTypes>(10));
@@ -473,30 +427,29 @@ describe('core', () => {
       );
 
       yield* _(
-        pg2.command({
-          sql: 'CREATE TABLE test_perf1 (id INT PRIMARY KEY, word VARCHAR)',
-        })
+        pg2.command(
+          'CREATE TABLE test_perf1 (id INT PRIMARY KEY, word VARCHAR)'
+        )
       );
       yield* _(
-        pg2.command({
-          sql: 'CREATE TABLE test_perf2 (id INT PRIMARY KEY, word VARCHAR)',
-        })
+        pg2.command(
+          'CREATE TABLE test_perf2 (id INT PRIMARY KEY, word VARCHAR)'
+        )
       );
       yield* _(
-        pg2.command({
-          sql: `INSERT INTO test_perf1 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`,
-        })
+        pg2.command(
+          `INSERT INTO test_perf1 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`
+        )
       );
       yield* _(
-        pg2.command({
-          sql: `INSERT INTO test_perf2 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`,
-        })
+        pg2.command(
+          `INSERT INTO test_perf2 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`
+        )
       );
 
-      yield* _(pg2.command({ sql: 'DROP TABLE test_perf1' }));
-      yield* _(pg2.command({ sql: 'DROP TABLE test_perf2' }));
-
-      yield* _(pg2.command({ sql: `DROP PUBLICATION IF EXISTS test_pub3` }));
+      yield* _(pg2.command('DROP TABLE test_perf1'));
+      yield* _(pg2.command('DROP TABLE test_perf2'));
+      yield* _(pg2.command('DROP PUBLICATION IF EXISTS test_pub3'));
 
       return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
     });

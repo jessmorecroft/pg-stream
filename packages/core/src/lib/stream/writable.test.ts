@@ -1,6 +1,6 @@
-import { push } from './push';
+import { push, toSinkable } from './writable';
 import { FileSystem, layer } from '@effect/platform-node/FileSystem';
-import { Effect, Option, Chunk, Either, Sink, Stream } from 'effect';
+import { Effect, Option, Chunk, Sink, Stream } from 'effect';
 import { createWriteStream } from 'fs';
 
 it('should push "manually"', async () => {
@@ -8,7 +8,7 @@ it('should push "manually"', async () => {
     Effect.flatMap((fs) =>
       fs.makeTempFileScoped().pipe(
         Effect.flatMap((filename) =>
-          push<Buffer>(() => createWriteStream(filename), {
+          push<Buffer>(createWriteStream(filename), {
             endOnClose: true,
           }).pipe(
             Effect.flatMap((push) =>
@@ -28,9 +28,6 @@ it('should push "manually"', async () => {
               })
             ),
             Effect.scoped,
-            Effect.catchAll(([either]) =>
-              Either.isLeft(either) ? Effect.fail(either.left) : Effect.unit
-            ),
             Effect.flatMap(() =>
               Effect.map(fs.readFile(filename), (_) =>
                 Buffer.from(_).toString()
@@ -56,9 +53,9 @@ it('should push as sink', async () => {
       fs.makeTempFileScoped().pipe(
         Effect.flatMap((filename) => {
           const sink = Sink.fromPush(
-            push<Buffer>(() => createWriteStream(filename), {
+            push<Buffer>(createWriteStream(filename), {
               endOnClose: true,
-            })
+            }).pipe(Effect.map(toSinkable))
           );
 
           return Stream.runDrain(

@@ -1,10 +1,10 @@
 import { Chunk, Effect, Option, Stream } from 'effect';
-import { pull } from './pull';
+import { pull, toStreamable } from './readable';
 import { Readable } from 'stream';
 
 it('should pull from iterable', async () => {
   const program = pull<string>(
-    () => Readable.from(['one', 'two'], { objectMode: true }),
+    Readable.from(['one', 'two'], { objectMode: true }),
     {
       waitForClose: true,
     }
@@ -27,21 +27,42 @@ it('should pull from iterable', async () => {
 
   const { one, two, end } = await Effect.runPromise(program);
 
-  expect(Chunk.toReadonlyArray(one)).toEqual(['one']);
-  expect(Chunk.toReadonlyArray(two)).toEqual(['two']);
+  expect(one).toEqual('one');
+  expect(two).toEqual('two');
   expect(end).toEqual('done');
 });
 
 it('should pull as stream', async () => {
   const stream = Stream.fromPull(
     pull(
-      () =>
-        Readable.from([Buffer.from('one'), Buffer.from('two')], {
-          objectMode: true,
-        }),
+      Readable.from([Buffer.from('one'), Buffer.from('two')], {
+        objectMode: true,
+      }),
       {
         waitForClose: true,
       }
+    ).pipe(Effect.map(toStreamable))
+  );
+
+  const program = Stream.runCollect(stream).pipe(Effect.scoped);
+  const chunks = await Effect.runPromise(program);
+
+  expect(Chunk.toReadonlyArray(chunks)).toEqual([
+    Buffer.from('one'),
+    Buffer.from('two'),
+  ]);
+});
+
+it('should be simpler if not waiting for a close', async () => {
+  const stream = Stream.fromPull(
+    Effect.succeed(
+      toStreamable(
+        pull(
+          Readable.from([Buffer.from('one'), Buffer.from('two')], {
+            objectMode: true,
+          })
+        )
+      )
     )
   );
 

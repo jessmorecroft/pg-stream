@@ -1,7 +1,6 @@
-import { Chunk, Data, Effect, Option, Ref, Scope, Stream } from 'effect';
+import { Chunk, Data, Effect, Option, Scope, Stream } from 'effect';
 import * as net from 'net';
 import * as tls from 'tls';
-import * as socket from './socket';
 import { listen } from '../util/util';
 import { FileSystem } from '@effect/platform-node/FileSystem';
 
@@ -15,17 +14,14 @@ export type StreamSuccess<T> = T extends Stream.Stream<
   ? A
   : never;
 
-export type ServerSocket = Effect.Effect.Success<
-  StreamSuccess<Effect.Effect.Success<Server['listen']>['sockets']>
->;
-
 export interface Options {
   host?: string;
   port?: number;
-  ssl?: {
-    keyFile: string;
-    certFile: string;
-  };
+}
+
+export interface SSLOptions {
+  keyFile: string;
+  certFile: string;
 }
 
 export class ServerError extends Data.TaggedClass('ServerError')<{
@@ -85,33 +81,30 @@ const onConnection = (server: net.Server) =>
     });
   });
 
-const tlsConnect = (
-  base: net.Socket,
-  { keyFile, certFile }: NonNullable<Options['ssl']>
+export const tlsConnect = (
+  socket: net.Socket,
+  { keyFile, certFile }: SSLOptions
 ) =>
-  Effect.acquireRelease(
-    Effect.flatMap(FileSystem, (fs) =>
-      Effect.all({
-        key: fs.readFile(keyFile),
-        cert: fs.readFile(certFile),
-      })
-    ).pipe(
-      Effect.flatMap(({ cert, key }) => {
-        const tlsSocket = new tls.TLSSocket(base, {
+  Effect.flatMap(FileSystem, (fs) =>
+    Effect.all({
+      key: fs.readFile(keyFile),
+      cert: fs.readFile(certFile),
+    })
+  ).pipe(
+    Effect.map(
+      ({ cert, key }) =>
+        new tls.TLSSocket(socket, {
           isServer: true,
           enableTrace: false,
           key: Buffer.from(key),
           cert: Buffer.from(cert),
-        });
-        return socket.makeBaseSocket(tlsSocket);
-      }),
-      Effect.tap(() => Effect.log('server socket upgrading to SSL'))
+        })
     ),
-    (socket) => socket.end
+    Effect.tap(() => Effect.log('server socket upgrading to SSL'))
   );
 
-export const make = ({ host, port, ssl }: Options) => {
-  const server = net.createServer();
+export const make = ({ host, port }: Options) => {
+  const server = net.createServer({ allowHalfOpen: false });
 
   const listen = Effect.suspend(() => {
     server.listen({ host, port });
@@ -122,54 +115,7 @@ export const make = ({ host, port, ssl }: Options) => {
         Stream.merge(Stream.fromEffect(onError(server))),
         Stream.merge(Stream.fromEffect(onClose(server)).pipe(Stream.drain), {
           haltStrategy: 'right',
-        }),
-        Stream.map((sock) =>
-          Effect.acquireRelease(
-            Effect.flatMap(socket.makeBaseSocket(sock), (baseSocket) =>
-              Effect.gen(function* (_) {
-                const upgraded = yield* _(Ref.make(false));
-
-                const upgradeToSSL = Effect.zipLeft(
-                  Effect.if(!!ssl, {
-                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                    onTrue: Effect.suspend(() => tlsConnect(sock, ssl!)),
-                    onFalse: Effect.fail(
-                      new ServerError({
-                        cause: new Error('SSL key/cert not specified'),
-                      })
-                    ),
-                  }).pipe(
-                    Effect.tapError((e) => {
-                      if (
-                        e._tag === 'BadArgument' ||
-                        e._tag === 'SystemError'
-                      ) {
-                        return Effect.logWarning(
-                          'upgrade SSL failed: ' + e.message
-                        );
-                      }
-                      return Effect.logWarning(
-                        'upgrade SSL failed: ' + e.cause.message
-                      );
-                    })
-                  ),
-                  Ref.set(upgraded, true)
-                );
-
-                return {
-                  ...baseSocket,
-                  upgradeToSSL,
-                  upgraded,
-                };
-              })
-            ),
-            ({ upgraded, end }) =>
-              Effect.if(Ref.get(upgraded), {
-                onTrue: Effect.unit,
-                onFalse: end,
-              })
-          )
-        )
+        })
       ),
       address: server.address() as net.AddressInfo,
     })),

@@ -1,17 +1,7 @@
-import { Data, Effect, Option, Sink, Stream, Ref } from 'effect';
+import { Data, Effect, Option } from 'effect';
 import * as net from 'net';
-import { push as streamPush } from '../stream/push';
-import { pull as streamPull } from '../stream/pull';
 import * as tls from 'tls';
 import { listen } from '../util/util';
-
-export type Socket = Effect.Effect.Success<ReturnType<typeof make>>;
-
-export type SSLSocket = Effect.Effect.Success<ReturnType<typeof tlsConnect>>;
-
-export type BaseSocket = Effect.Effect.Success<
-  ReturnType<typeof makeBaseSocket>
->;
 
 interface Options {
   host: string;
@@ -63,69 +53,31 @@ export const onSecureConnect: (
     get: () => Option.none(),
   });
 
-export const makeBaseSocket = (socket: net.Socket) =>
-  Effect.gen(function* (_) {
-    const end = Effect.async<never, never, void>((cb) => {
-      if (socket.errored || socket.writableFinished) {
-        cb(Effect.unit);
-        return;
-      }
-      if (!socket.writableEnded) {
-        socket.end();
-      }
-      cb(
-        Effect.raceAll([onFinish(socket), onError(socket)]).pipe(Effect.ignore)
-      );
-    });
-
-    const pull = yield* _(streamPull<Buffer>(() => socket));
-    const push = yield* _(streamPush<Buffer>(() => socket));
-
-    const pullStream = Stream.fromPull(Effect.succeed(pull));
-    const pushSink = Sink.fromPush(Effect.succeed(push));
-
-    return { pull, push, end, pullStream, pushSink };
+export const end = (socket: net.Socket) =>
+  Effect.async<never, never, void>((cb) => {
+    if (socket.errored || socket.writableFinished) {
+      cb(Effect.unit);
+      return;
+    }
+    if (!socket.writableEnded) {
+      socket.end();
+    }
+    cb(Effect.raceAll([onFinish(socket), onError(socket)]).pipe(Effect.ignore));
   });
 
-const tlsConnect = (socket: net.Socket) =>
-  Effect.acquireRelease(
-    Effect.suspend(() => {
-      const tlsSocket = tls.connect({ socket });
-      return Effect.raceAll([
-        onSecureConnect(tlsSocket),
-        onError(tlsSocket),
-      ]).pipe(Effect.flatMap(() => makeBaseSocket(tlsSocket)));
-    }),
-    (socket) => socket.end
-  );
+export const tlsConnect = (socket: net.Socket) =>
+  Effect.suspend(() => {
+    const tlsSocket = tls.connect({ socket });
+    return Effect.raceAll([
+      onSecureConnect(tlsSocket),
+      onError(tlsSocket),
+    ]).pipe(Effect.map(() => tlsSocket));
+  });
 
-export const make = ({ host, port }: Options) =>
-  Effect.acquireRelease(
-    Effect.suspend(() => {
-      const socket = net.connect({ host, port, allowHalfOpen: false });
-      return Effect.raceAll([onConnect(socket), onError(socket)]).pipe(
-        Effect.flatMap(() => makeBaseSocket(socket)),
-        Effect.flatMap((baseSocket) =>
-          Effect.gen(function* (_) {
-            const upgraded = yield* _(Ref.make(false));
-
-            const upgradeToSSL = Effect.zipLeft(
-              tlsConnect(socket),
-              Ref.set(upgraded, true)
-            );
-
-            return {
-              ...baseSocket,
-              upgradeToSSL,
-              upgraded,
-            };
-          })
-        )
-      );
-    }),
-    ({ upgraded, end }) =>
-      Effect.if(Ref.get(upgraded), {
-        onTrue: Effect.unit,
-        onFalse: end,
-      })
-  );
+export const connect = ({ host, port }: Options) =>
+  Effect.suspend(() => {
+    const socket = net.connect({ host, port, allowHalfOpen: false });
+    return Effect.raceAll([onConnect(socket), onError(socket)]).pipe(
+      Effect.map(() => socket)
+    );
+  });

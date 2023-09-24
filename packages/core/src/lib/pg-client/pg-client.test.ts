@@ -2,22 +2,22 @@ import { Effect, Stream } from 'effect';
 import { make, PgClient } from './pg-client';
 import {
   make as makeTestServer,
+  readOrFail,
+  write,
   Options,
-  PgTestServerSocket,
 } from './pg-test-server';
 import { layer } from '@effect/platform-node/FileSystem';
 import * as Schema from '@effect/schema/Schema';
 import { PgTypes } from '../pg-protocol';
+import { Socket } from 'net';
 
 it.each<Options>([
   {
-    host: 'localhost',
     database: 'testdb',
     username: 'testuser',
     password: 'password',
   },
   {
-    host: 'localhost',
     database: 'testdb',
     username: 'testuer',
     password: 'password',
@@ -27,14 +27,14 @@ it.each<Options>([
     },
   },
 ])('should handle an sql request', async (options) => {
-  const { listen } = makeTestServer(options);
+  const { listen } = makeTestServer({ ...options, host: 'localhost' });
 
-  const server = (socket: PgTestServerSocket) =>
+  const server = (socket: Socket) =>
     Effect.gen(function* (_) {
-      yield* _(socket.readOrFail('Query'));
+      yield* _(readOrFail(socket)('Query'));
 
       yield* _(
-        socket.write({
+        write(socket)({
           type: 'RowDescription',
           fields: [
             {
@@ -86,14 +86,14 @@ it.each<Options>([
         })
       );
       yield* _(
-        socket.write({
+        write(socket)({
           type: 'DataRow',
           values: ['hello', '42', '2022-02-01T10:11:12.002Z', '66', '{1,2,3}'],
         })
       );
 
       yield* _(
-        socket.write({
+        write(socket)({
           type: 'NoticeResponse',
           notices: [
             {
@@ -109,21 +109,21 @@ it.each<Options>([
       );
 
       yield* _(
-        socket.write({
+        write(socket)({
           type: 'DataRow',
           values: ['world', '99', '2023-01-01T10:11:12.001Z', '77', '{4,5,6}'],
         })
       );
 
       yield* _(
-        socket.write({
+        write(socket)({
           type: 'CommandComplete',
           commandTag: 'done',
         })
       );
 
       yield* _(
-        socket.write({
+        write(socket)({
           type: 'ReadyForQuery',
           transactionStatus: 'I',
         })
@@ -133,9 +133,9 @@ it.each<Options>([
   const handler = (client: PgClient) =>
     Effect.gen(function* (_) {
       return yield* _(
-        client.query({
-          sql: 'select * from greeting',
-          schema: Schema.nonEmptyArray(
+        client.query(
+          'select * from greeting',
+          Schema.nonEmptyArray(
             Schema.struct({
               column1: Schema.string,
               column2: Schema.number,
@@ -143,8 +143,8 @@ it.each<Options>([
               column4: Schema.bigintFromSelf,
               column5: Schema.array(Schema.number),
             })
-          ),
-        })
+          )
+        )
       );
     });
 
