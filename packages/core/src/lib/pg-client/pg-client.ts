@@ -1,4 +1,13 @@
-import { Data, Effect, Either, Schedule, Stream, pipe } from 'effect';
+import {
+  Chunk,
+  Data,
+  Effect,
+  Either,
+  GroupBy,
+  Schedule,
+  Stream,
+  pipe,
+} from 'effect';
 import * as E from 'fp-ts/Either';
 import * as P from 'parser-ts/Parser';
 import {
@@ -59,7 +68,7 @@ export interface Options {
 export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
   filter(msg: PgOutputDecoratedMessageTypes): msg is T;
   key?(msg: T): string;
-  process(msg: T): Effect.Effect<never, E, void>;
+  process(chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
 }
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
@@ -407,14 +416,20 @@ export const recvlogical =
       );
 
       const dataStream = filtered.pipe(
-        Stream.mapEffect(
-          ([msg, log]) =>
-            Effect.map(processor.process(msg), () => log.walStart),
-          {
-            key: ([msg]) =>
-              processor.key?.(msg) ??
-              ('namespace' in msg ? `${msg.namespace}.${msg.name}` : ''),
-          }
+        Stream.groupByKey(
+          ([msg]) =>
+            processor.key?.(msg) ??
+            ('namespace' in msg ? `${msg.namespace}.${msg.name}` : '')
+        ),
+        GroupBy.evaluate((key, stream) =>
+          stream.pipe(
+            Stream.mapChunksEffect((chunk) =>
+              Effect.map(
+                processor.process(Chunk.map(chunk, ([msg]) => msg)),
+                () => Chunk.map(chunk, ([, log]) => log.walStart)
+              )
+            )
+          )
         ),
         Stream.merge(skipped.pipe(Stream.map((log) => log.walStart))),
         Stream.flatMap((wal) => {

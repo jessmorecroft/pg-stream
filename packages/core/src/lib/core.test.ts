@@ -136,7 +136,7 @@ describe('core', () => {
                   PgOutputDecoratedMessageTypes,
                   DecoratedBegin | DecoratedCommit
                 > => msg.type !== 'Begin' && msg.type !== 'Commit',
-                process: (data) => queue.offer(data),
+                process: (data) => queue.offerAll(data),
               },
             })
             .pipe(Effect.flatMap(() => Effect.never))
@@ -306,7 +306,7 @@ describe('core', () => {
                   processor: {
                     filter: (msg): msg is DecoratedInsert =>
                       msg.type === 'Insert',
-                    process: (data) => queue.offer(data),
+                    process: (data) => queue.offerAll(data),
                   },
                 }),
                 Deferred.await(stop)
@@ -433,7 +433,7 @@ describe('core', () => {
               publicationNames: ['test_pub3'],
               processor: {
                 filter: (msg): msg is DecoratedInsert => msg.type === 'Insert',
-                process: (data) => queue.offer(data),
+                process: (data) => queue.offerAll(data),
                 key: () => '',
               },
             })
