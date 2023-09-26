@@ -9,7 +9,7 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["vitest"],
-    "lib": ["ES2023"],
+    "lib": ["ES2022"],
     "target": "ES2022"
   },
   "files": [],

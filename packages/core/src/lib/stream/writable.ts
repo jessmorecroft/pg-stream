@@ -138,5 +138,5 @@ export const writeSink: <T>(
   encode: Encode<T>
 ) => Sink.Sink<never, WritableError, T, never, void> = (writable, encode) =>
   Sink.fromPush(Effect.succeed(toSinkable(push(writable)))).pipe(
-    Sink.contramap(encode)
+    Sink.mapInput(encode)
   );

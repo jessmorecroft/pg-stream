@@ -40,9 +40,7 @@ it('should push "manually"', async () => {
     Effect.scoped
   );
 
-  const result = await Effect.runPromise(
-    program.pipe(Effect.provideLayer(layer))
-  );
+  const result = await Effect.runPromise(program.pipe(Effect.provide(layer)));
 
   expect(result).toEqual('helloworld!');
 });
@@ -78,9 +76,7 @@ it('should push as sink', async () => {
     )
   );
 
-  const result = await Effect.runPromise(
-    program.pipe(Effect.provideLayer(layer))
-  );
+  const result = await Effect.runPromise(program.pipe(Effect.provide(layer)));
 
   expect(result).toEqual('howyoudoing?');
 });

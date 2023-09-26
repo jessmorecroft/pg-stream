@@ -1,6 +1,25 @@
-import { PgClient, make as makePgClient } from './pg-client';
-import { PgPool, make as makePgPool } from './pg-pool';
+import { make as makePgClient } from './pg-client';
+import { make as makePgPool } from './pg-pool';
+
+export type {
+  DecoratedBegin,
+  DecoratedCommit,
+  DecoratedDelete,
+  DecoratedInsert,
+  DecoratedRelation,
+  DecoratedTruncate,
+  DecoratedUpdate,
+  PgOutputDecoratedMessageTypes,
+} from './transform-log-data';
 
 export { makePgClient, makePgPool };
 
-export type { PgClient, PgPool };
+export {
+  PgClient,
+  XLogProcessor,
+  PgFailedAuth,
+  PgParseError,
+  PgServerError,
+} from './pg-client';
+
+export { PgPool } from './pg-pool';

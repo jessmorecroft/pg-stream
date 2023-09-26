@@ -170,7 +170,7 @@ it.each<Options>([
   );
 
   const rows = await Effect.runPromise(
-    program.pipe(Effect.scoped, Effect.provideLayer(layer))
+    program.pipe(Effect.scoped, Effect.provide(layer))
   );
 
   expect(rows).toEqual([

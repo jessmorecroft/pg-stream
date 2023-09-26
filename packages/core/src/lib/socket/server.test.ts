@@ -79,7 +79,7 @@ it.each<SSLOptions | undefined>([
   });
 
   const result = await Effect.runPromise(
-    program.pipe(Effect.scoped, Effect.provideLayer(layer))
+    program.pipe(Effect.scoped, Effect.provide(layer))
   );
 
   expect(result).toEqual('thequickbrownfoxjumpedoverthelazydog!');
