@@ -8,13 +8,12 @@ This lib is built on top of the awesome [Effect TS](https://www.effect.website) 
 
 The pg-stream lib exposes a PgClient constructor and a PgClientPool constructor. Both of these are scoped to ensure any connections are closed when you are done.
 
-The PgClient object provides three methods:
+The PgClient object provides the following methods:
 
-- `command` - executes an SQL statement on the server where results are not expected
-- `query` - executes an SQL statement on the server where results are expected
+- `query` - sends one or more SQL statements to the Postgres server for execution, and returns zero, one or many sets of results that have been validated by the supplied schemas.
 - `recvlogical` - starts a logical replication stream from the server, which is fed to a supplied processor.
 
-### `command` and `query`
+### `query`
 
 ```typescript
 import { makePgClient } from '@jmorecroft67/pg-stream-core';
@@ -25,7 +24,7 @@ const program = Effect.gen(function* (_) {
   const pg = yield* _(
     makePgClient({
       username: 'postgres',
-      password: 'password',
+      password: 'topsecret',
       database: 'postgres',
       host: 'localhost',
       port: 5432,
@@ -33,50 +32,78 @@ const program = Effect.gen(function* (_) {
     })
   );
 
-  yield* _(pg.command('create table test (id integer primary key, greeting varchar)'));
-  yield* _(pg.command('alter table test replica identity full'));
-  yield* _(pg.command(`insert into test values (1, 'hello'), (2, 'gday')`));
-  const rows = yield* _(
+  const test1Schema = Schema.nonEmptyArray(
+    Schema.struct({
+      id: Schema.number,
+      greeting: Schema.string,
+    })
+  );
+  const test2Schema = Schema.nonEmptyArray(
+    Schema.struct({
+      id: Schema.number,
+      greeting: Schema.string,
+      last_updated: Schema.DateFromSelf,
+    })
+  );
+
+  const [test1, test2] = yield* _(
     pg.query(
-      'select * from test',
-      Schema.nonEmptyArray(
-        Schema.struct({
-          id: Schema.number,
-          greeting: Schema.string,
-        })
-      )
+      `create table test1 (id integer primary key, greeting varchar);
+       insert into test1 values (1, 'hello'), (2, 'gday');
+       select * from test1;
+       drop table test1;
+       create table test2 (id integer primary key, greeting varchar, last_updated timestamp);
+       insert into test2 values (1, 'hello', now()), (2, 'gday', now());
+       delete from test2 where id = 1;
+       select * from test2;
+       drop table test2;`,
+      test1Schema,
+      test2Schema
     )
   );
-  yield* _(pg.command('delete from test where id = 1'));
-  yield* _(pg.command('drop table test'));
 
-  return rows;
+  return { test1, test2 };
 });
 
-Effect.runPromise(program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))).then((rows) => {
-  console.log('returned:', rows);
+Effect.runPromise(
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+).then((results) => {
+  console.log('returned:', results);
 });
 ```
 
 The output of this running against a test postgres docker container with self-signed cert is:
 
 ```
-$ NODE_TLS_REJECT_UNAUTHORIZED=0 node dist/test.js
-(node:84102) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+$ NODE_TLS_REJECT_UNAUTHORIZED=0 node dist/test.js 
+(node:92744) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
 (Use `node --trace-warnings ...` to show where the warning was created)
-timestamp=2023-09-26T09:20:37.536Z level=INFO fiber=#0 message="CREATE TABLE"
-timestamp=2023-09-26T09:20:37.541Z level=INFO fiber=#0 message="ALTER TABLE"
-timestamp=2023-09-26T09:20:37.545Z level=INFO fiber=#0 message="INSERT 0 2"
-timestamp=2023-09-26T09:20:37.549Z level=INFO fiber=#0 message="SELECT 2"
-timestamp=2023-09-26T09:20:37.553Z level=INFO fiber=#0 message="DELETE 1"
-timestamp=2023-09-26T09:20:37.558Z level=INFO fiber=#0 message="DROP TABLE"
-returned: [ { id: 1, greeting: 'hello' }, { id: 2, greeting: 'gday' } ]
+timestamp=2023-09-27T01:15:51.514Z level=INFO fiber=#0 message="CREATE TABLE"
+timestamp=2023-09-27T01:15:51.516Z level=INFO fiber=#0 message="INSERT 0 2"
+timestamp=2023-09-27T01:15:51.516Z level=INFO fiber=#0 message="SELECT 2"
+timestamp=2023-09-27T01:15:51.516Z level=INFO fiber=#0 message="DROP TABLE"
+timestamp=2023-09-27T01:15:51.516Z level=INFO fiber=#0 message="CREATE TABLE"
+timestamp=2023-09-27T01:15:51.516Z level=INFO fiber=#0 message="INSERT 0 2"
+timestamp=2023-09-27T01:15:51.516Z level=INFO fiber=#0 message="DELETE 1"
+timestamp=2023-09-27T01:15:51.517Z level=INFO fiber=#0 message="SELECT 1"
+timestamp=2023-09-27T01:15:51.517Z level=INFO fiber=#0 message="DROP TABLE"
+returned: {
+  test1: [ { id: 1, greeting: 'hello' }, { id: 2, greeting: 'gday' } ],
+  test2: [
+    { id: 2, greeting: 'gday', last_updated: 2023-09-26T15:15:51.474Z }
+  ]
+}
 ```
 
 ### recvlogical
 
 ```typescript
-import { makePgPool, DecoratedInsert, DecoratedDelete, DecoratedUpdate } from '@jmorecroft67/pg-stream-core';
+import {
+  makePgPool,
+  DecoratedInsert,
+  DecoratedDelete,
+  DecoratedUpdate,
+} from '@jmorecroft67/pg-stream-core';
 import { Chunk, Effect, Queue } from 'effect';
 import * as Schema from '@effect/schema/Schema';
 
@@ -99,10 +126,17 @@ const program = Effect.gen(function* (_) {
   const pg1 = yield* _(pgPool.get());
   const pg2 = yield* _(pgPool.get());
 
-  const queue = yield* _(Queue.unbounded<DecoratedInsert | DecoratedDelete | DecoratedUpdate>());
+  const queue = yield* _(
+    Queue.unbounded<DecoratedInsert | DecoratedDelete | DecoratedUpdate>()
+  );
 
-  yield* _(pg2.command('create publication test_pub for all tables'));
-  yield* _(pg2.query('CREATE_REPLICATION_SLOT test_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT', Schema.any));
+  yield* _(pg2.query('create publication test_pub for all tables'));
+  yield* _(
+    pg2.query(
+      'CREATE_REPLICATION_SLOT test_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+      Schema.any
+    )
+  );
 
   const fibre = Effect.runFork(
     Effect.timeout(
@@ -110,7 +144,12 @@ const program = Effect.gen(function* (_) {
         slotName: 'test_slot',
         publicationNames: ['test_pub'],
         processor: {
-          filter: (msg): msg is DecoratedInsert | DecoratedDelete | DecoratedUpdate => msg.type === 'Insert' || msg.type === 'Delete' || msg.type === 'Update',
+          filter: (
+            msg
+          ): msg is DecoratedInsert | DecoratedDelete | DecoratedUpdate =>
+            msg.type === 'Insert' ||
+            msg.type === 'Delete' ||
+            msg.type === 'Update',
           process: (data) => queue.offerAll(data),
         },
       }),
@@ -118,22 +157,32 @@ const program = Effect.gen(function* (_) {
     )
   );
 
-  yield* _(pg1.command('create table test (id integer primary key, greeting varchar)'));
-  yield* _(pg1.command('alter table test replica identity full'));
-  yield* _(pg1.command(`insert into test values (1, 'hello'), (2, 'gday')`));
-  yield* _(pg1.command(`update test set greeting = 'hi' where id = 1`));
-  yield* _(pg1.command('delete from test where id = 1'));
-  yield* _(pg1.command('drop table test'));
-  yield* _(pg1.command('drop publication if exists test_pub'));
+  yield* _(
+    pg1.query(`create table test (id integer primary key, greeting varchar);
+               alter table test replica identity full;
+               insert into test values (1, 'hello'), (2, 'gday');
+               update test set greeting = 'hi' where id = 1;
+               delete from test where id = 1;
+               drop table test;
+               drop publication if exists test_pub;`)
+  );
 
   yield* _(fibre.await());
 
   const chunk = yield* _(queue.takeAll());
 
-  return Chunk.toReadonlyArray(chunk).map((log) => (log.type === 'Insert' ? { inserted: log.newRecord } : log.type === 'Update' ? { deleted: log.oldRecord, inserted: log.newRecord } : { deleted: log.oldRecord }));
+  return Chunk.toReadonlyArray(chunk).map((log) =>
+    log.type === 'Insert'
+      ? { inserted: log.newRecord }
+      : log.type === 'Update'
+      ? { deleted: log.oldRecord, inserted: log.newRecord }
+      : { deleted: log.oldRecord }
+  );
 });
 
-Effect.runPromise(program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))).then((streamed) => {
+Effect.runPromise(
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+).then((streamed) => {
   console.log('returned:', JSON.stringify(streamed, null, 2));
 });
 ```
@@ -141,19 +190,19 @@ Effect.runPromise(program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFa
 The output of this running against a test postgres docker container with self-signed cert is:
 
 ```
-$ NODE_TLS_REJECT_UNAUTHORIZED=0 node dist/test2.js
-(node:85202) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+$ NODE_TLS_REJECT_UNAUTHORIZED=0 node dist/test2.js 
+(node:91318) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
 (Use `node --trace-warnings ...` to show where the warning was created)
-timestamp=2023-09-26T10:06:01.508Z level=INFO fiber=#0 message="CREATE PUBLICATION"
-timestamp=2023-09-26T10:06:01.522Z level=INFO fiber=#0 message=CREATE_REPLICATION_SLOT
-timestamp=2023-09-26T10:06:01.533Z level=INFO fiber=#86 message="SELECT 1"
-timestamp=2023-09-26T10:06:01.536Z level=INFO fiber=#0 message="CREATE TABLE"
-timestamp=2023-09-26T10:06:01.553Z level=INFO fiber=#0 message="ALTER TABLE"
-timestamp=2023-09-26T10:06:01.557Z level=INFO fiber=#0 message="INSERT 0 2"
-timestamp=2023-09-26T10:06:01.561Z level=INFO fiber=#0 message="UPDATE 1"
-timestamp=2023-09-26T10:06:01.583Z level=INFO fiber=#0 message="DELETE 1"
-timestamp=2023-09-26T10:06:01.596Z level=INFO fiber=#0 message="DROP TABLE"
-timestamp=2023-09-26T10:06:01.602Z level=INFO fiber=#0 message="DROP PUBLICATION"
+timestamp=2023-09-27T00:37:39.065Z level=INFO fiber=#0 message="CREATE PUBLICATION"
+timestamp=2023-09-27T00:37:39.088Z level=INFO fiber=#0 message=CREATE_REPLICATION_SLOT
+timestamp=2023-09-27T00:37:39.106Z level=INFO fiber=#86 message="SELECT 1"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="CREATE TABLE"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="ALTER TABLE"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="INSERT 0 2"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="UPDATE 1"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="DELETE 1"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="DROP TABLE"
+timestamp=2023-09-27T00:37:39.126Z level=INFO fiber=#0 message="DROP PUBLICATION"
 returned: [
   {
     "inserted": {

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   Chunk,
   Data,
@@ -9,6 +10,7 @@ import {
   pipe,
 } from 'effect';
 import * as E from 'fp-ts/Either';
+import * as O from 'fp-ts/Option';
 import * as P from 'parser-ts/Parser';
 import {
   CopyData,
@@ -22,7 +24,6 @@ import {
   pgServerMessageParser,
 } from '../pg-protocol/message-parsers';
 import {
-  MakeValueTypeParserOptions,
   makePgClientMessage,
   makePgCopyData,
   makeValueTypeParser,
@@ -158,146 +159,131 @@ export const write: (
 ) => Effect.Effect<never, WritableError, void> = (writable) =>
   stream.write(writable, makePgClientMessage);
 
-export const query: (
-  socket: Duplex
-) => <F, A extends readonly unknown[]>(
-  sql: string,
-  schema: Schema.Schema<F, A>,
-  options?: MakeValueTypeParserOptions
-) => Effect.Effect<
-  never,
-  | WritableError
-  | ReadableError
-  | ParseMessageError
-  | NoMoreMessagesError
-  | PgServerError
-  | PgParseError
-  | ParseMessageGroupError,
-  A
-> = (socket) => (sql, schema, options) =>
-  Effect.gen(function* (_) {
-    yield* _(write(socket)({ type: 'Query', sql }));
+type SchemaTypes<A extends [...Schema.Schema<any>[]]> = {
+  [K in keyof A]: Schema.Schema.To<A[K]>;
+};
 
-    const transformRowDescription = ({ fields }: RowDescription) =>
-      fields.map(({ name, dataTypeId }) => ({
-        name,
-        parser: makeValueTypeParser(
-          dataTypeId,
-          options ?? {
+type NoneOneOrMany<T extends [...any]> = T extends [infer A]
+  ? A
+  : T extends []
+  ? void
+  : T;
+
+export const query =
+  (socket: Duplex) =>
+  <S extends [...Schema.Schema<any, any>[]]>(
+    sql: string,
+    ...schemas: S
+  ): Effect.Effect<
+    never,
+    | WritableError
+    | ReadableError
+    | ParseMessageError
+    | NoMoreMessagesError
+    | PgServerError
+    | PgParseError
+    | ParseMessageGroupError,
+    NoneOneOrMany<SchemaTypes<S>>
+  > =>
+    Effect.gen(function* (_) {
+      yield* _(write(socket)({ type: 'Query', sql }));
+
+      const transformRowDescription = ({ fields }: RowDescription) =>
+        fields.map(({ name, dataTypeId }) => ({
+          name,
+          parser: makeValueTypeParser(dataTypeId, {
             parseBigInts: true,
             parseDates: true,
             parseNumerics: true,
+          }),
+        }));
+
+      const transformDataRow = ({
+        rowParsers,
+        dataRow,
+      }: {
+        rowParsers: ReturnType<typeof transformRowDescription>;
+        dataRow: DataRow;
+      }) =>
+        rowParsers.reduce((acc, { name, parser }, index) => {
+          const input = dataRow.values[index];
+          if (input !== null) {
+            const parsed = pipe(
+              S.run(input)(parser),
+              E.fold(
+                () => {
+                  // Failed to parse row value. Just use the original input.
+                  return input;
+                },
+                ({ value }) => value
+              )
+            );
+            return { ...acc, [name]: parsed };
           }
-        ),
-      }));
+          return { ...acc, [name]: input };
+        }, {} as object);
 
-    const transformDataRow = ({
-      rowParsers,
-      dataRow,
-    }: {
-      rowParsers: ReturnType<typeof transformRowDescription>;
-      dataRow: DataRow;
-    }) =>
-      rowParsers.reduce((acc, { name, parser }, index) => {
-        const input = dataRow.values[index];
-        if (input !== null) {
-          const parsed = pipe(
-            S.run(input)(parser),
-            E.fold(
-              () => {
-                // Failed to parse row value. Just use the original input.
-                return input;
-              },
-              ({ value }) => value
-            )
-          );
-          return { ...acc, [name]: parsed };
-        }
-        return { ...acc, [name]: input };
-      }, {} as object);
-
-    const { rows, commandTag } = yield* _(
-      readUntilReady(socket)(
-        pipe(
-          item,
-          P.filter(isRowDescription),
-          P.map(transformRowDescription),
-          P.chain((rowParsers) =>
-            pipe(
-              item,
-              P.filter(isDataRow),
-              P.map((dataRow) => transformDataRow({ rowParsers, dataRow })),
-              P.many
-            )
-          ),
-          P.bindTo('rows'),
-          P.bind('commandTag', () =>
-            pipe(
-              item,
-              P.filter(isCommandComplete),
-              P.map(({ commandTag }) => commandTag)
-            )
-          ),
-          P.chainFirst(() =>
-            pipe(
-              item,
-              P.filter(isReadyForQuery),
-              P.chain(() => P.eof())
+      const results = yield* _(
+        readUntilReady(socket)(
+          pipe(
+            item,
+            P.filter(isRowDescription),
+            P.map(transformRowDescription),
+            P.chain((rowParsers) =>
+              pipe(
+                item,
+                P.filter(isDataRow),
+                P.map((dataRow) => transformDataRow({ rowParsers, dataRow })),
+                P.many
+              )
+            ),
+            P.optional,
+            P.bindTo('rows'),
+            P.bind('commandTag', () =>
+              pipe(
+                item,
+                P.filter(isCommandComplete),
+                P.map(({ commandTag }) => commandTag)
+              )
+            ),
+            P.many,
+            P.chainFirst(() =>
+              pipe(
+                item,
+                P.filter(isReadyForQuery),
+                P.chain(() => P.eof())
+              )
             )
           )
         )
-      )
-    );
+      );
 
-    yield* _(Effect.log(commandTag));
+      yield* _(
+        Effect.forEach(results, ({ commandTag }) => Effect.log(commandTag))
+      );
 
-    return yield* _(
-      Schema.parse(schema)(rows).pipe(
-        Effect.mapError(
-          (pe) => new PgParseError({ message: formatErrors(pe.errors) })
-        ),
-        Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
-      )
-    );
-  });
+      const rows = results
+        .map(({ rows }) => rows)
+        .filter(O.isSome)
+        .map((rows) => rows.value);
 
-export const command: (
-  socket: Duplex
-) => (
-  sql: string
-) => Effect.Effect<
-  never,
-  | WritableError
-  | ReadableError
-  | ParseMessageError
-  | NoMoreMessagesError
-  | PgServerError
-  | ParseMessageGroupError,
-  string
-> = (socket) => (sql) =>
-  Effect.gen(function* (_) {
-    yield* _(write(socket)({ type: 'Query', sql }));
-
-    const { commandTag } = yield* _(
-      readUntilReady(socket)(
-        pipe(
-          item,
-          P.filter(isCommandComplete),
-          P.chainFirst(() =>
-            pipe(
-              item,
-              P.filter(isReadyForQuery),
-              P.chain(() => P.eof())
-            )
-          )
+      const parsed = yield* _(
+        Schema.parse(Schema.tuple(...schemas))(rows).pipe(
+          Effect.mapError(
+            (pe) => new PgParseError({ message: formatErrors(pe.errors) })
+          ),
+          Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
         )
-      )
-    );
+      );
 
-    yield* _(Effect.log(commandTag));
-
-    return commandTag;
-  });
+      if (parsed.length === 0) {
+        return undefined;
+      }
+      if (parsed.length === 1) {
+        return parsed[0];
+      }
+      return parsed;
+    });
 
 export const recvlogical =
   (socket: Duplex) =>
@@ -416,6 +402,7 @@ export const recvlogical =
       );
 
       const dataStream = filtered.pipe(
+        Stream.bufferChunks({ capacity: 16 }),
         Stream.groupByKey(
           ([msg]) =>
             processor.key?.(msg) ??
@@ -432,11 +419,16 @@ export const recvlogical =
           )
         ),
         Stream.merge(skipped.pipe(Stream.map((log) => log.walStart))),
-        Stream.flatMap((wal) => {
-          const item = wals.find((_) => _[0] === wal);
-          if (item) {
-            item[1] = true;
-          }
+        Stream.mapChunks((chunk) => {
+          Chunk.forEach(chunk, (wal) => {
+            const item = wals.find((_) => _[0] === wal);
+            if (item) {
+              item[1] = true;
+            }
+          });
+          return Chunk.of(undefined);
+        }),
+        Stream.flatMap(() => {
           let next: bigint | undefined;
           while (wals.length > 0) {
             if (wals[0][1]) {
@@ -524,7 +516,6 @@ export const make = ({ useSSL, ...options }: Options) =>
     const info = yield* _(startup({ socket, ...options }));
 
     return {
-      command: command(socket),
       query: query(socket),
       recvlogical: recvlogical(socket),
       ...info,
