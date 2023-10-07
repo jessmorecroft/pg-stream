@@ -582,6 +582,7 @@ export type PgClientMessageTypes =
   | Query
   | PasswordMessage
   | CopyData
+  | CopyDone
   | SASLInitialResponse
   | SASLResponse;
 
