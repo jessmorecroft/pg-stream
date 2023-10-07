@@ -1,4 +1,4 @@
-import { Chunk, Deferred, Effect, Queue, Stream, identity } from 'effect';
+import { Chunk, Deferred, Effect, Exit, Queue, Stream, identity } from 'effect';
 import { makePgPool } from './core';
 import { describe, it, expect } from 'vitest';
 import * as Schema from '@effect/schema/Schema';
@@ -134,7 +134,7 @@ describe('core', () => {
                   PgOutputDecoratedMessageTypes,
                   DecoratedBegin | DecoratedCommit
                 > => msg.type !== 'Begin' && msg.type !== 'Commit',
-                process: (data) => queue.offerAll(data),
+                process: (_, data) => queue.offerAll(data),
               },
             })
             .pipe(Effect.flatMap(() => Effect.never))
@@ -302,7 +302,7 @@ describe('core', () => {
                   processor: {
                     filter: (msg): msg is DecoratedInsert =>
                       msg.type === 'Insert',
-                    process: (data) => queue.offerAll(data),
+                    process: (_, data) => queue.offerAll(data),
                   },
                 }),
                 Deferred.await(stop)
@@ -427,7 +427,7 @@ describe('core', () => {
               publicationNames: ['test_pub3'],
               processor: {
                 filter: (msg): msg is DecoratedInsert => msg.type === 'Insert',
-                process: (data) => queue.offerAll(data),
+                process: (_, data) => queue.offerAll(data),
                 key: () => '',
               },
             })
@@ -460,5 +460,125 @@ describe('core', () => {
     });
 
     await Effect.runPromise(program.pipe(Effect.scoped));
+  });
+
+  it('should stream replication and exit gracefully', async () => {
+    const program = Effect.gen(function* (_) {
+      const pgPool = yield* _(
+        makePgPool({
+          host: 'db',
+          port: 5432,
+          useSSL: true,
+          database: 'postgres',
+          username: 'postgres',
+          password: 'topsecret',
+          min: 1,
+          max: 10,
+          timeToLive: '1 minutes',
+          replication: true,
+        })
+      );
+
+      const pg1 = yield* _(pgPool.get());
+      const pg2 = yield* _(pgPool.get());
+
+      yield* _(pg1.query('DROP PUBLICATION IF EXISTS test_pub4'));
+      yield* _(pg1.query('CREATE PUBLICATION test_pub4 FOR ALL TABLES'));
+
+      yield* _(
+        pg1.query(
+          'CREATE_REPLICATION_SLOT test_slot4 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          Schema.tuple(
+            Schema.struct({
+              consistent_point: walLsnFromString,
+            })
+          )
+        )
+      );
+
+      const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
+
+      const signal = yield* _(Deferred.make<never, void>());
+
+      yield* _(
+        Effect.zip(
+          pg1.recvlogical({
+            slotName: 'test_slot4',
+            publicationNames: ['test_pub4'],
+            processor: {
+              filter: (
+                msg: PgOutputDecoratedMessageTypes
+              ): msg is Exclude<
+                PgOutputDecoratedMessageTypes,
+                DecoratedBegin | DecoratedCommit
+              > => msg.type !== 'Begin' && msg.type !== 'Commit',
+              process: (_, data) => queue.offerAll(data),
+            },
+            signal,
+          }),
+          pg2
+            .query(
+              `
+        CREATE TABLE IF NOT EXISTS test_graceful
+         (id INTEGER PRIMARY KEY, word VARCHAR NOT NULL);
+        INSERT INTO test_graceful VALUES (1, 'hello'), (2, 'world');
+        DROP TABLE test_graceful;`
+            )
+            .pipe(
+              Effect.flatMap(() =>
+                Effect.delay(
+                  Deferred.done(signal, Exit.succeed(undefined)),
+                  '1 seconds'
+                )
+              )
+            ),
+          {
+            concurrent: true,
+          }
+        )
+      );
+
+      // the original connection should still work
+      yield* _(pg1.query('select 42;', Schema.any));
+
+      return yield* _(
+        Queue.takeAll(queue).pipe(Effect.map(Chunk.toReadonlyArray))
+      );
+    });
+
+    const results = await Effect.runPromise(program.pipe(Effect.scoped));
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        type: 'Relation',
+        name: 'test_graceful',
+        namespace: 'public',
+        columns: [
+          expect.objectContaining({ name: 'id', dataTypeName: 'int4' }),
+          expect.objectContaining({
+            name: 'word',
+            dataTypeName: 'varchar',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        type: 'Insert',
+        namespace: 'public',
+        name: 'test_graceful',
+        newRecord: {
+          id: 1,
+          word: 'hello',
+        },
+      }),
+      expect.objectContaining({
+        type: 'Insert',
+        namespace: 'public',
+        name: 'test_graceful',
+        newRecord: {
+          id: 2,
+          word: 'world',
+        },
+      }),
+    ]);
   });
 });

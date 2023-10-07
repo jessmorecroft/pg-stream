@@ -443,6 +443,8 @@ export const makePgClientMessage = (message: PgClientMessageTypes): Buffer => {
       return makePgPasswordMessage(message);
     case 'CopyData':
       return makePgCopyData(message);
+    case 'CopyDone':
+      return makePgCopyDone();
     case 'SASLInitialResponse':
       return makePgSaslInitialResponse(message);
     case 'SASLResponse':

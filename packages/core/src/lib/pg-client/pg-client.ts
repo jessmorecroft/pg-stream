@@ -2,10 +2,12 @@
 import {
   Chunk,
   Data,
+  Deferred,
   Effect,
   Either,
   GroupBy,
-  Schedule,
+  Option,
+  Sink,
   Stream,
   pipe,
 } from 'effect';
@@ -14,20 +16,18 @@ import * as O from 'fp-ts/Option';
 import * as P from 'parser-ts/Parser';
 import {
   CopyData,
+  CopyDone,
   DataRow,
   ErrorResponse,
   NoticeResponse,
   PgClientMessageTypes,
   RowDescription,
+  XKeepAlive,
   XLogData,
   pgSSLRequestResponse,
   pgServerMessageParser,
 } from '../pg-protocol/message-parsers';
-import {
-  makePgClientMessage,
-  makePgCopyData,
-  makeValueTypeParser,
-} from '../pg-protocol';
+import { makePgClientMessage, makeValueTypeParser } from '../pg-protocol';
 import { PgServerMessageTypes } from '../pg-protocol/message-parsers';
 import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
@@ -69,7 +69,7 @@ export interface Options {
 export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
   filter(msg: PgOutputDecoratedMessageTypes): msg is T;
   key?(msg: T): string;
-  process(chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
+  process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
 }
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
@@ -270,7 +270,10 @@ export const query =
       const parsed = yield* _(
         Schema.parse(Schema.tuple(...schemas))(rows).pipe(
           Effect.mapError(
-            (pe) => new PgParseError({ message: formatErrors(pe.errors) })
+            (pe) =>
+              new PgParseError({
+                message: `SQL: ${sql}: ${formatErrors(pe.errors)}`,
+              })
           ),
           Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
         )
@@ -291,10 +294,12 @@ export const recvlogical =
     slotName,
     publicationNames,
     processor,
+    signal,
   }: {
     slotName: string;
     publicationNames: string[];
     processor: XLogProcessor<E, T>;
+    signal?: Deferred.Deferred<never, void>;
   }): Effect.Effect<
     never,
     | WritableError
@@ -311,25 +316,12 @@ export const recvlogical =
     void
   > =>
     Effect.gen(function* (_) {
-      const [{ confirmed_flush_lsn: startLsn }] = yield* _(
-        query(socket)(
-          `SELECT confirmed_flush_lsn FROM pg_replication_slots WHERE slot_name = '${slotName}'`,
-          Schema.tuple(
-            Schema.struct({
-              confirmed_flush_lsn: walLsnFromString,
-            })
-          )
-        )
-      );
-
       yield* _(
         write(socket)({
           type: 'Query',
           sql: `START_REPLICATION SLOT ${slotName} LOGICAL ${Schema.encodeSync(
             walLsnFromString
-          )(
-            startLsn
-          )} (proto_version '1', publication_names '${publicationNames.join(
+          )(0n)} (proto_version '1', publication_names '${publicationNames.join(
             ','
           )}')`,
         })
@@ -338,23 +330,38 @@ export const recvlogical =
       // wait for this before streaming
       yield* _(readOrFail(socket)('CopyBothResponse'));
 
-      const messages = stream.readStream(
-        read(socket),
-        (e) => e._tag === 'NoMoreMessagesError'
-      );
+      const processedLsns: [bigint, boolean][] = [];
 
       const [logData, keepalives] = yield* _(
-        messages.pipe(
-          Stream.filter(hasTypeOf('CopyData')),
-          Stream.partitionEither(({ payload }) => {
-            return hasTypeOf('XLogData')(payload)
-              ? Effect.succeed(Either.left(payload))
-              : Effect.succeed(Either.right(payload));
-          })
-        )
+        stream
+          .readStream(read(socket), (e) => e._tag === 'NoMoreMessagesError')
+          .pipe(
+            Stream.takeUntil((_) => _.type === 'CopyDone'),
+            Stream.filter(hasTypeOf('CopyData')),
+            Stream.tap((msg) => {
+              if (
+                msg.payload.type === 'XLogData' &&
+                msg.payload.walEnd !== 0n
+              ) {
+                processedLsns.push([msg.payload.walEnd, false]);
+              } else if (msg.payload.type === 'XKeepAlive') {
+                while (
+                  processedLsns.length &&
+                  processedLsns[processedLsns.length - 1][0]
+                ) {
+                  processedLsns.pop();
+                }
+                processedLsns.push([msg.payload.walEnd, true]);
+              }
+              return Effect.unit;
+            }),
+            Stream.partitionEither(({ payload }) => {
+              return hasTypeOf('XLogData')(payload)
+                ? Effect.succeed(Either.left(payload))
+                : Effect.succeed(Either.right(payload));
+            })
+          )
       );
-
-      const wals: [bigint, boolean][] = [];
 
       const [filtered, skipped] = yield* _(
         logData.pipe(
@@ -382,10 +389,6 @@ export const recvlogical =
                 )
               )
           ),
-          Stream.tap(([, log]) => {
-            wals.push([log.walStart, false]);
-            return Effect.unit;
-          }),
           Stream.partitionEither(
             (
               msgAndLog
@@ -412,27 +415,42 @@ export const recvlogical =
           stream.pipe(
             Stream.mapChunksEffect((chunk) =>
               Effect.map(
-                processor.process(Chunk.map(chunk, ([msg]) => msg)),
-                () => Chunk.map(chunk, ([, log]) => log.walStart)
+                processor.process(
+                  key,
+                  Chunk.map(chunk, ([msg]) => msg)
+                ),
+                () => Chunk.map(chunk, ([, log]) => log.walEnd)
               )
             )
           )
         ),
-        Stream.merge(skipped.pipe(Stream.map((log) => log.walStart))),
+        Stream.merge(Stream.map(skipped, (log) => log.walEnd)),
         Stream.mapChunks((chunk) => {
           Chunk.forEach(chunk, (wal) => {
-            const item = wals.find((_) => _[0] === wal);
+            const item = processedLsns.find((_) => _[0] === wal && !_[1]);
             if (item) {
               item[1] = true;
             }
           });
-          return Chunk.of(undefined);
-        }),
-        Stream.flatMap(() => {
+          return Chunk.of<void>(undefined);
+        })
+      );
+
+      const ticks = keepalives.pipe(
+        Stream.filter(
+          (msg): msg is XKeepAlive => msg.type === 'XKeepAlive' && msg.replyNow
+        ),
+        Stream.merge(Stream.tick('10 seconds'))
+      );
+
+      const source = Stream.merge(dataStream, ticks, {
+        haltStrategy: 'left',
+      }).pipe(
+        Stream.flatMap((keepalive) => {
           let next: bigint | undefined;
-          while (wals.length > 0) {
-            if (wals[0][1]) {
-              next = wals.shift()?.[0];
+          while (processedLsns.length > 0) {
+            if (processedLsns[0][1]) {
+              next = processedLsns.shift()?.[0];
             } else {
               break;
             }
@@ -440,25 +458,12 @@ export const recvlogical =
           if (next) {
             return Stream.succeed(next);
           }
+          if (keepalive) {
+            return Stream.succeed(0n);
+          }
           return Stream.empty;
-        })
-      );
-
-      const keepaliveStream = Stream.merge(
-        keepalives.pipe(
-          Stream.filter((_) => _.replyNow && _.type === 'XKeepAlive'),
-          Stream.map(() => startLsn)
-        ),
-        Stream.schedule(
-          Stream.repeatValue(startLsn),
-          Schedule.fixed('5 seconds')
-        )
-      );
-
-      const source = Stream.merge(dataStream, keepaliveStream, {
-        haltStrategy: 'left',
-      }).pipe(
-        Stream.scan(startLsn, (s, a) => (a > s ? a : s)),
+        }),
+        Stream.scan(0n, (s, a) => (a > s ? a : s)),
         Stream.map((lsn): CopyData => {
           const timeStamp =
             BigInt(new Date().getTime() - Date.UTC(2000, 0, 1)) * 1000n;
@@ -477,9 +482,79 @@ export const recvlogical =
         })
       );
 
-      const sink = stream.writeSink(socket, makePgCopyData);
+      const bufferPush = stream.toSinkable(stream.push(socket));
 
-      yield* _(Stream.run(source, sink));
+      const push = (
+        input: Option.Option<Chunk.Chunk<PgClientMessageTypes>>
+      ) => {
+        if (Option.isNone(input)) {
+          return bufferPush(Option.none());
+        }
+
+        const chunk = input.value;
+
+        const [head, tail] = Chunk.splitWhere(
+          chunk,
+          (_) => _.type === 'CopyDone'
+        );
+
+        if (Chunk.isNonEmpty(tail)) {
+          return bufferPush(
+            Option.some(
+              Chunk.map(
+                Chunk.append(head, Chunk.headNonEmpty(tail)),
+                makePgClientMessage
+              )
+            )
+          ).pipe(
+            Effect.flatMap(() =>
+              Effect.fail([
+                Either.right<void>(undefined),
+                Chunk.empty<never>(),
+              ] as const)
+            )
+          );
+        }
+
+        return bufferPush(Option.some(Chunk.map(chunk, makePgClientMessage)));
+      };
+
+      const writeSink = Sink.fromPush(Effect.succeed(push));
+
+      yield* _(
+        Stream.run(
+          Stream.merge(
+            source,
+            Stream.fromEffect(
+              (signal ? Deferred.await(signal) : Effect.never).pipe(
+                Effect.map((): CopyDone => ({ type: 'CopyDone' }))
+              )
+            )
+          ),
+          Sink.flatMap(writeSink, () => Sink.drain)
+        )
+      );
+
+      const { commandTags } = yield* _(
+        readUntilReady(socket)(
+          pipe(
+            item,
+            P.filter(isCommandComplete),
+            P.map(({ commandTag }) => commandTag),
+            P.many,
+            P.bindTo('commandTags'),
+            P.chainFirst(() =>
+              pipe(
+                item,
+                P.filter(isReadyForQuery),
+                P.chain(() => P.eof())
+              )
+            )
+          )
+        )
+      );
+
+      yield* _(Effect.forEach(commandTags, (_) => Effect.log(_)));
     }).pipe(Effect.scoped);
 
 export const make = ({ useSSL, ...options }: Options) =>
