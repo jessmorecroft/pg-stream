@@ -3,6 +3,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import { listen } from '../util/util';
 import { FileSystem } from '@effect/platform-node/FileSystem';
+import { PlatformError } from '@effect/platform-node/Error';
 
 export type Server = ReturnType<typeof make>;
 
@@ -84,7 +85,7 @@ const onConnection = (server: net.Server) =>
 export const tlsConnect = (
   socket: net.Socket,
   { keyFile, certFile }: SSLOptions
-) =>
+): Effect.Effect<FileSystem, PlatformError, tls.TLSSocket> =>
   Effect.flatMap(FileSystem, (fs) =>
     Effect.all({
       key: fs.readFile(keyFile),

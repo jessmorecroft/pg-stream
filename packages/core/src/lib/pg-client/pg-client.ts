@@ -27,7 +27,11 @@ import {
   pgSSLRequestResponse,
   pgServerMessageParser,
 } from '../pg-protocol/message-parsers';
-import { makePgClientMessage, makeValueTypeParser } from '../pg-protocol';
+import {
+  MakeValueTypeParserOptions,
+  makePgClientMessage,
+  makeValueTypeParser,
+} from '../pg-protocol';
 import { PgServerMessageTypes } from '../pg-protocol/message-parsers';
 import { logBackendMessage } from './util';
 import * as S from 'parser-ts/string';
@@ -163,16 +167,178 @@ type SchemaTypes<A extends [...Schema.Schema<any>[]]> = {
   [K in keyof A]: Schema.Schema.To<A[K]>;
 };
 
+type SchemaTypesUnion<A extends [...Schema.Schema<any>[]]> =
+  SchemaTypes<A>[number];
+
 type NoneOneOrMany<T extends [...any]> = T extends [infer A]
   ? A
   : T extends []
   ? void
   : T;
 
+const transformRowDescription = (
+  { fields }: RowDescription,
+  options?: MakeValueTypeParserOptions
+) =>
+  fields.map(({ name, dataTypeId }) => ({
+    name,
+    parser: makeValueTypeParser(
+      dataTypeId,
+      options ?? {
+        parseBigInts: true,
+        parseDates: true,
+        parseNumerics: true,
+        parseBooleans: true,
+        parseFloats: true,
+        parseInts: true,
+        parseJson: true,
+      }
+    ),
+  }));
+
+type RowParsers = ReturnType<typeof transformRowDescription>;
+
+const transformDataRow = ({
+  rowParsers,
+  dataRow,
+}: {
+  rowParsers: RowParsers;
+  dataRow: DataRow;
+}) =>
+  rowParsers.reduce((acc, { name, parser }, index) => {
+    const input = dataRow.values[index];
+    if (input !== null) {
+      const parsed = pipe(
+        S.run(input)(parser),
+        E.fold(
+          () => {
+            // Failed to parse row value. Just use the original input.
+            return input;
+          },
+          ({ value }) => value
+        )
+      );
+      return { ...acc, [name]: parsed };
+    }
+    return { ...acc, [name]: input };
+  }, {} as object);
+
+export const queryStream =
+  (socket: Duplex) =>
+  <S extends [...Schema.Schema<any, any>[]]>(
+    sqlOrOptions:
+      | string
+      | { sql: string; parserOptions: MakeValueTypeParserOptions },
+    ...schemas: S
+  ): Stream.Stream<
+    never,
+    | WritableError
+    | ReadableError
+    | ParseMessageError
+    | NoMoreMessagesError
+    | PgServerError
+    | PgParseError
+    | ParseMessageGroupError,
+    SchemaTypesUnion<S>
+  > => {
+    type StateType = {
+      schemasLeft: Schema.Schema<any, any>[];
+      decode?: (row: DataRow) => Effect.Effect<never, PgParseError, any>;
+    };
+
+    const schemasLeft = [...schemas];
+
+    const { sql, parserOptions } =
+      typeof sqlOrOptions === 'string'
+        ? { sql: sqlOrOptions, parserOptions: undefined }
+        : sqlOrOptions;
+
+    return Stream.fromEffect(write(socket)({ type: 'Query', sql })).pipe(
+      Stream.flatMap(() =>
+        stream
+          .readStream(read(socket), () => false)
+          .pipe(
+            Stream.takeUntil(hasTypeOf('ReadyForQuery')),
+            Stream.tap((_) =>
+              _.type === 'CommandComplete'
+                ? Effect.log(_.commandTag)
+                : Effect.unit
+            ),
+            Stream.filter(
+              hasTypeOf('RowDescription', 'DataRow', 'ReadyForQuery')
+            ),
+            Stream.mapAccumEffect(
+              { schemasLeft } as StateType,
+              (
+                state,
+                msg
+              ): Effect.Effect<
+                never,
+                PgParseError,
+                readonly [StateType, any | undefined]
+              > => {
+                if (msg.type === 'DataRow') {
+                  if (!state.decode) {
+                    return Effect.fail(
+                      new PgParseError({
+                        message: 'unexpected data',
+                      })
+                    );
+                  }
+
+                  return Effect.map(state.decode(msg), (_) => [state, _]);
+                }
+
+                if (msg.type === 'ReadyForQuery') {
+                  if (state.schemasLeft.length > 0) {
+                    return Effect.fail(
+                      new PgParseError({
+                        message: 'unexpected end of results',
+                      })
+                    );
+                  }
+
+                  return Effect.succeed([state, undefined]);
+                }
+
+                const schema = schemasLeft.shift();
+                if (!schema) {
+                  return Effect.fail(
+                    new PgParseError({
+                      message: 'unexpected result set',
+                    })
+                  );
+                }
+
+                const rowParsers = transformRowDescription(msg, parserOptions);
+
+                const decode = (dataRow: DataRow) =>
+                  Schema.parse(schema)(
+                    transformDataRow({ rowParsers, dataRow })
+                  ).pipe(
+                    Effect.mapError(
+                      (pe) =>
+                        new PgParseError({
+                          message: formatErrors(pe.errors),
+                        })
+                    )
+                  );
+
+                return Effect.succeed([{ schemasLeft, decode }, undefined]);
+              }
+            ),
+            Stream.filter((_) => !!_)
+          )
+      )
+    );
+  };
+
 export const query =
   (socket: Duplex) =>
   <S extends [...Schema.Schema<any, any>[]]>(
-    sql: string,
+    sqlOrOptions:
+      | string
+      | { sql: string; parserOptions: MakeValueTypeParserOptions },
     ...schemas: S
   ): Effect.Effect<
     never,
@@ -186,49 +352,21 @@ export const query =
     NoneOneOrMany<SchemaTypes<S>>
   > =>
     Effect.gen(function* (_) {
+      const { sql, parserOptions } =
+        typeof sqlOrOptions === 'string'
+          ? { sql: sqlOrOptions, parserOptions: undefined }
+          : sqlOrOptions;
+
       yield* _(write(socket)({ type: 'Query', sql }));
-
-      const transformRowDescription = ({ fields }: RowDescription) =>
-        fields.map(({ name, dataTypeId }) => ({
-          name,
-          parser: makeValueTypeParser(dataTypeId, {
-            parseBigInts: true,
-            parseDates: true,
-            parseNumerics: true,
-          }),
-        }));
-
-      const transformDataRow = ({
-        rowParsers,
-        dataRow,
-      }: {
-        rowParsers: ReturnType<typeof transformRowDescription>;
-        dataRow: DataRow;
-      }) =>
-        rowParsers.reduce((acc, { name, parser }, index) => {
-          const input = dataRow.values[index];
-          if (input !== null) {
-            const parsed = pipe(
-              S.run(input)(parser),
-              E.fold(
-                () => {
-                  // Failed to parse row value. Just use the original input.
-                  return input;
-                },
-                ({ value }) => value
-              )
-            );
-            return { ...acc, [name]: parsed };
-          }
-          return { ...acc, [name]: input };
-        }, {} as object);
 
       const results = yield* _(
         readUntilReady(socket)(
           pipe(
             item,
             P.filter(isRowDescription),
-            P.map(transformRowDescription),
+            P.map((rowDescription) =>
+              transformRowDescription(rowDescription, parserOptions)
+            ),
             P.chain((rowParsers) =>
               pipe(
                 item,
@@ -272,7 +410,7 @@ export const query =
           Effect.mapError(
             (pe) =>
               new PgParseError({
-                message: `SQL: ${sql}: ${formatErrors(pe.errors)}`,
+                message: formatErrors(pe.errors),
               })
           ),
           Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
@@ -484,9 +622,7 @@ export const recvlogical =
 
       const bufferPush = stream.toSinkable(stream.push(socket));
 
-      const push = (
-        input: Option.Option<Chunk.Chunk<PgClientMessageTypes>>
-      ) => {
+      const push = (input: Option.Option<Chunk.Chunk<CopyData | CopyDone>>) => {
         if (Option.isNone(input)) {
           return bufferPush(Option.none());
         }
@@ -592,6 +728,7 @@ export const make = ({ useSSL, ...options }: Options) =>
 
     return {
       query: query(socket),
+      queryStream: queryStream(socket),
       recvlogical: recvlogical(socket),
       ...info,
     };

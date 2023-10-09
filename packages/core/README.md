@@ -6,14 +6,37 @@ This lib is built on top of the awesome [Effect TS](https://www.effect.website) 
 
 ### structure
 
-The pg-stream lib exposes a PgClient constructor and a PgClientPool constructor. Both of these are scoped to ensure any connections are closed when you are done.
+The pg-stream lib exposes a `PgClient` constructor and a `PgClientPool` constructor. Both of these are scoped to ensure any connections are closed when you are done.
 
-The PgClient object provides the following methods:
+The `PgClient` object provides the following methods:
 
-- `query` - sends one or more SQL statements to the Postgres server for execution, and returns zero, one or many sets of results that have been validated by the supplied schemas.
-- `recvlogical` - starts a logical replication stream from the server, which is fed to a supplied processor.
+#### query 
 
-### `query`
+The `query` method sends one or more SQL statements to the Postgres server for execution, and returns zero, one or many sets of results that have been validated by the supplied schemas. 
+
+```typescript
+  <S extends [...Schema.Schema<any, any>[]]>
+  query(
+    sqlOrOptions:
+      | string
+      | { sql: string; parserOptions: MakeValueTypeParserOptions },
+    ...schemas: S
+  ): Effect.Effect<
+    never,
+    | WritableError
+    | ReadableError
+    | ParseMessageError
+    | NoMoreMessagesError
+    | PgServerError
+    | PgParseError
+    | ParseMessageGroupError,
+    NoneOneOrMany<SchemaTypes<S>>
+  >
+```
+- `sqlOrOptions`: A string containing one or more SQL statements or an object containing SQL and parser options. The parser options determine how each row is parsed before its entire result set is validated by a supplied schema. If you do not specify parser options the default behavior is to parse all supported types.
+- `schemas`: Zero, one or more schemas that are used to validate any results. Each schema must define the type of a result set.
+
+##### Example
 
 ```typescript
 import { makePgClient } from '@jmorecroft67/pg-stream-core';
@@ -95,7 +118,203 @@ returned: {
 }
 ```
 
-### recvlogical
+#### queryStream 
+
+The `queryStream` method is like query, but returns a stream of a union of the schema types. 
+
+```typescript
+  <S extends [...Schema.Schema<any, any>[]]>
+  queryStream(
+    sqlOrOptions:
+      | string
+      | { sql: string; parserOptions: MakeValueTypeParserOptions },
+    ...schemas: S
+  ): Stream.Stream<
+    never,
+    | WritableError
+    | ReadableError
+    | ParseMessageError
+    | NoMoreMessagesError
+    | PgServerError
+    | PgParseError
+    | ParseMessageGroupError,
+    SchemaTypesUnion<S>
+  >
+```
+- `sqlOrOptions`: A string containing one or more SQL statements or an object containing SQL and parser options. The parser options determine how each row is parsed before being validated by a supplied schema. If you do not specify parser options the default behavior is to parse all supported types.
+- `schemas`: Zero, one or more schemas that are used to validate any results. Each schema must define the type of a record in a result set.
+
+##### Example
+
+```typescript
+import { makePgClient } from '@jmorecroft67/pg-stream-core';
+import { Effect, Stream } from 'effect';
+import * as Schema from '@effect/schema/Schema';
+
+const program = Effect.gen(function* (_) {
+  const pg = yield* _(
+    makePgClient({
+      username: 'postgres',
+      password: 'topsecret',
+      database: 'postgres',
+      host: 'localhost',
+      port: 5432,
+      useSSL: true,
+    })
+  );
+
+  const dogSchema = Schema.struct({
+    id: Schema.number,
+    name: Schema.string,
+    age: Schema.number,
+    bark: Schema.literal('woof', 'bowow', 'ruff'),
+    last_updated: Schema.DateFromSelf,
+  });
+
+  const catSchema = Schema.struct({
+    id: Schema.number,
+    name: Schema.string,
+    age: Schema.number,
+    lives: Schema.between(1, 9)(Schema.number),
+    last_updated: Schema.DateFromSelf,
+  });
+
+  const stream = pg.queryStream(
+    `
+    create type bark_type AS ENUM ('woof', 'bowow', 'ruff');
+    create table dog (id serial, name text, age int, bark bark_type, last_updated timestamp);
+    insert into dog values (1, 'bingo', 2, 'woof', now()), (2, 'spot', 7, 'ruff', now());
+    select * from dog;
+    drop table dog;
+    drop type bark_type;
+    create table cat (id serial, name text, age int, lives int, last_updated timestamp);
+    insert into cat values (1, 'garfield', 2, 9, now()), (2, 'simba', 7, 2, now());
+    select * from cat;
+    drop table cat;`,
+    Schema.attachPropertySignature('kind', 'dog')(dogSchema),
+    Schema.attachPropertySignature('kind', 'cat')(catSchema)
+  );
+
+  return yield* _(
+    stream.pipe(
+      Stream.tap((animal) => {
+        if (animal.kind === 'cat') {
+          return Effect.log(`${animal.name} has ${animal.lives} lives!`);
+        }
+        return Effect.log(
+          `${animal.name}'s bark sounds like "${animal.bark}"!`
+        );
+      }),
+      Stream.runCollect
+    )
+  );
+});
+
+Effect.runPromise(
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+).then((results) => {
+  console.log('returned:', results);
+});
+```
+
+The output of this running against a test postgres docker container with self-signed cert is:
+
+```
+$ node dist/packages/cli/main.js 
+(node:20781) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+timestamp=2023-10-09T13:12:48.353Z level=INFO fiber=#34 message="CREATE TYPE"
+timestamp=2023-10-09T13:12:48.356Z level=INFO fiber=#34 message="CREATE TABLE"
+timestamp=2023-10-09T13:12:48.356Z level=INFO fiber=#34 message="INSERT 0 2"
+timestamp=2023-10-09T13:12:48.359Z level=INFO fiber=#34 message="bingo's bark sounds like \"woof\"!"
+timestamp=2023-10-09T13:12:48.360Z level=INFO fiber=#34 message="spot's bark sounds like \"ruff\"!"
+timestamp=2023-10-09T13:12:48.360Z level=INFO fiber=#34 message="SELECT 2"
+timestamp=2023-10-09T13:12:48.360Z level=INFO fiber=#34 message="DROP TABLE"
+timestamp=2023-10-09T13:12:48.361Z level=INFO fiber=#34 message="DROP TYPE"
+timestamp=2023-10-09T13:12:48.361Z level=INFO fiber=#34 message="CREATE TABLE"
+timestamp=2023-10-09T13:12:48.362Z level=INFO fiber=#34 message="INSERT 0 2"
+timestamp=2023-10-09T13:12:48.363Z level=INFO fiber=#34 message="garfield has 9 lives!"
+timestamp=2023-10-09T13:12:48.364Z level=INFO fiber=#34 message="simba has 2 lives!"
+timestamp=2023-10-09T13:12:48.364Z level=INFO fiber=#34 message="SELECT 2"
+timestamp=2023-10-09T13:12:48.365Z level=INFO fiber=#34 message="DROP TABLE"
+returned: {
+  _id: 'Chunk',
+  values: [
+    {
+      kind: 'dog',
+      id: 1,
+      name: 'bingo',
+      age: 2,
+      bark: 'woof',
+      last_updated: 2023-10-09T03:12:48.318Z
+    },
+    {
+      kind: 'dog',
+      id: 2,
+      name: 'spot',
+      age: 7,
+      bark: 'ruff',
+      last_updated: 2023-10-09T03:12:48.318Z
+    },
+    {
+      kind: 'cat',
+      id: 1,
+      name: 'garfield',
+      age: 2,
+      lives: 9,
+      last_updated: 2023-10-09T03:12:48.318Z
+    },
+    {
+      kind: 'cat',
+      id: 2,
+      name: 'simba',
+      age: 7,
+      lives: 2,
+      last_updated: 2023-10-09T03:12:48.318Z
+    }
+  ]
+}
+```
+
+#### recvlogical 
+
+The `recvlogical` method starts a logical replication stream from the server, which is fed to a supplied processor.
+```typescript
+  <E, T extends PgOutputDecoratedMessageTypes>
+  recvlogical({
+    slotName,
+    publicationNames,
+    processor,
+    signal,
+  }: {
+    slotName: string;
+    publicationNames: string[];
+    processor: XLogProcessor<E, T>;
+    signal?: Deferred.Deferred<never, void>;
+  }): Effect.Effect<
+    never,
+    | WritableError
+    | ReadableError
+    | ParseMessageError
+    | NoMoreMessagesError
+    | UnexpectedMessageError
+    | PgServerError
+    | PgParseError
+    | ParseMessageGroupError
+    | TableInfoNotFoundError
+    | NoTransactionContextError
+    | E,
+    void
+  > 
+
+```
+- `options`: 
+  - `slotName`: The name of the replication slot.
+  - `publicationNames`: The names of the publications being subscribed to.
+  - `processor`: A processor for the handling of streamed records, along with optional partition key generation (to constrain concurrency) and optional record filtering. If no partition key generation is defined, we default to generating a unique key per database table.
+  - `signal`: A optional signal for gracefully stopping the replication stream, which then allows continued use of the connection for further queries or streaming.
+
+#### Example
 
 ```typescript
 import {

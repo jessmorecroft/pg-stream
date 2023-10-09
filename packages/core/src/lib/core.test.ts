@@ -1,5 +1,5 @@
 import { Chunk, Deferred, Effect, Exit, Queue, Stream, identity } from 'effect';
-import { makePgPool } from './core';
+import { makePgClient, makePgPool } from './core';
 import { describe, it, expect } from 'vitest';
 import * as Schema from '@effect/schema/Schema';
 import { walLsnFromString } from './util/wal-lsn-from-string';
@@ -580,5 +580,51 @@ describe('core', () => {
         },
       }),
     ]);
+  });
+
+  it('should stream query', async () => {
+    const program = Effect.gen(function* (_) {
+      const pg = yield* _(
+        makePgClient({
+          host: 'db',
+          port: 5432,
+          useSSL: true,
+          database: 'postgres',
+          username: 'postgres',
+          password: 'topsecret',
+        })
+      );
+
+      const stream = pg.queryStream(
+        {
+          sql: `CREATE TABLE IF NOT EXISTS test_query_stream ( id SERIAL, word VARCHAR );
+           INSERT INTO test_query_stream SELECT g.*, 'word' FROM generate_series(1, 20000, 1) AS g(series);
+           SELECT *, 'lower' as category from test_query_stream where id <= 10000 order by id;
+           SELECT *, null as category from test_query_stream where id > 10000 order by id;
+           DROP TABLE test_query_stream;
+          `,
+          parserOptions: {}, // let's not parse anything
+        },
+        Schema.record(Schema.string, Schema.string),
+        Schema.record(Schema.string, Schema.nullable(Schema.string))
+      );
+
+      return yield* _(
+        stream.pipe(
+          Stream.zipWithIndex,
+          Stream.filter(
+            ([row, index]) =>
+              row['id'] === `${index + 1}` &&
+              row['word'] === 'word' &&
+              row['category'] === (index < 10000 ? 'lower' : null)
+          ),
+          Stream.runCount
+        )
+      );
+    });
+
+    const count = await Effect.runPromise(program.pipe(Effect.scoped));
+
+    expect(count).toEqual(20000);
   });
 });

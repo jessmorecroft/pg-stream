@@ -93,7 +93,11 @@ export type ValueType = BaseValueType | NestedArray<BaseValueType>;
 export type MakeValueTypeParserOptions = {
   parseNumerics?: boolean;
   parseDates?: boolean;
+  parseInts?: boolean;
   parseBigInts?: boolean;
+  parseBooleans?: boolean;
+  parseFloats?: boolean;
+  parseJson?: boolean;
 };
 
 export const makeValueTypeParser = (
@@ -147,6 +151,10 @@ const makeBaseValueTypeParser: (
 ) => P.Parser<string, BaseValueType> = (
   oid,
   options = {
+    parseBooleans: true,
+    parseFloats: true,
+    parseInts: true,
+    parseJson: true,
     parseNumerics: false,
     parseDates: false,
     parseBigInts: false,
@@ -157,7 +165,10 @@ const makeBaseValueTypeParser: (
   switch (baseType) {
     case 'int2':
     case 'int4': {
-      return S.int;
+      if (options.parseInts) {
+        return S.int;
+      }
+      return anyParser;
     }
     case 'int8': {
       if (options.parseBigInts) {
@@ -176,11 +187,17 @@ const makeBaseValueTypeParser: (
     }
     case 'float4':
     case 'float8': {
-      return S.float;
+      if (options.parseFloats) {
+        return S.float;
+      }
+      return anyParser;
     }
     case 'json':
     case 'jsonb': {
-      return jsonParser;
+      if (options.parseJson) {
+        return jsonParser;
+      }
+      return anyParser;
     }
     case 'date':
     case 'timestamp':

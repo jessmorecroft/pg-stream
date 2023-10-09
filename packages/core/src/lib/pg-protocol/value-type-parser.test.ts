@@ -106,6 +106,7 @@ describe(__filename, () => {
     (type) => {
       const baseParser = makeValueTypeParser(PgTypes[type].baseTypeOid, {
         parseNumerics: true,
+        parseFloats: true,
       });
       verifyParseSuccess(baseParser, '123.456', 123.456);
       verifyParseSuccess(baseParser, '01', 1);
@@ -114,6 +115,7 @@ describe(__filename, () => {
 
       const arrayParser = makeValueTypeParser(PgTypes[type].arrayTypeOid, {
         parseNumerics: true,
+        parseFloats: true,
       });
       verifyParseSuccess(arrayParser, '{1,2}', [1, 2]);
       verifyParseSuccess(arrayParser, '{{1,2},{3}}', [[1, 2], [3]]);
