@@ -4,6 +4,7 @@ import * as P from 'parser-ts/Parser';
 import * as E from 'fp-ts/Either';
 import { pipe } from 'fp-ts/lib/function';
 import { fail } from 'assert';
+import Decimal from 'decimal.js';
 
 describe(__filename, () => {
   const verifyParseSuccess = <T>(
@@ -14,7 +15,7 @@ describe(__filename, () => {
     pipe(
       S.run(input)(parser),
       E.fold(
-        ({ expected }) => fail(`expected ${expected}`),
+        ({ expected }) => fail(`input: ${input}, expected ${expected}`),
         ({ value }) => {
           expect(value).toEqual(expected);
         }
@@ -90,6 +91,7 @@ describe(__filename, () => {
 
     const arrayParser = makeValueTypeParser(PgTypes.int8.arrayTypeOid, {
       parseBigInts: true,
+      parseArrays: true,
     });
     verifyParseSuccess(arrayParser, '{1,2}', [1n, 2n]);
     verifyParseSuccess(arrayParser, '{{-1,-2},{3}}', [[-1n, -2n], [3n]]);
@@ -101,7 +103,7 @@ describe(__filename, () => {
     verifyParseFailure(arrayParser, '{{1,{2.3,{4,5,6}}},{7}}');
   });
 
-  it.each([['float4'], ['float8', 'numeric']] as PgTypeName[][])(
+  it.each([['float4'], ['float8']] as PgTypeName[][])(
     'should parse float',
     (type) => {
       const baseParser = makeValueTypeParser(PgTypes[type].baseTypeOid, {
@@ -114,8 +116,8 @@ describe(__filename, () => {
       verifyParseFailure(baseParser, '+1.2', 'a float');
 
       const arrayParser = makeValueTypeParser(PgTypes[type].arrayTypeOid, {
-        parseNumerics: true,
         parseFloats: true,
+        parseArrays: true,
       });
       verifyParseSuccess(arrayParser, '{1,2}', [1, 2]);
       verifyParseSuccess(arrayParser, '{{1,2},{3}}', [[1, 2], [3]]);
@@ -127,6 +129,38 @@ describe(__filename, () => {
       verifyParseFailure(arrayParser, '{{1,{2 .3,{4,5,6}}},{7}}');
     }
   );
+
+  it.each([['numeric']] as PgTypeName[][])('should parse numeric', (type) => {
+    const baseParser = makeValueTypeParser(PgTypes[type].baseTypeOid, {
+      parseNumerics: true,
+    });
+    verifyParseSuccess(baseParser, '123.456', new Decimal(123.456));
+    verifyParseSuccess(baseParser, '01', new Decimal(1));
+    verifyParseSuccess(baseParser, '+1.2', new Decimal('1.2'));
+    verifyParseFailure(baseParser, '1 .3');
+    const arrayParser = makeValueTypeParser(PgTypes[type].arrayTypeOid, {
+      parseNumerics: true,
+      parseFloats: true,
+      parseArrays: true,
+    });
+    verifyParseSuccess(arrayParser, '{1,2}', [new Decimal(1), new Decimal(2)]);
+    verifyParseSuccess(arrayParser, '{{1,2},{3}}', [
+      [new Decimal(1), new Decimal(2)],
+      [new Decimal(3)],
+    ]);
+    verifyParseSuccess(arrayParser, '{{1,{2.3,{3.1415,4,5}}},{6}}', [
+      [
+        new Decimal(1),
+        [
+          new Decimal('2.3'),
+          [new Decimal('3.1415'), new Decimal(4), new Decimal(5)],
+        ],
+      ],
+      [new Decimal(6)],
+    ]);
+    verifyParseFailure(arrayParser, '{{1,{2,{3,4,5}}},{6}');
+    verifyParseFailure(arrayParser, '{{1,{2 .3,{4,5,6}}},{7}}');
+  });
 
   it.each([['json'], ['jsonb']] as PgTypeName[][])(
     'should parse json',
@@ -190,6 +224,7 @@ describe(__filename, () => {
       );
       const arrayParser = makeValueTypeParser(PgTypes[type].arrayTypeOid, {
         parseDates: true,
+        parseArrays: true,
       });
       verifyParseSuccess(arrayParser, '{"2012-01-01"}', [
         new Date(Date.UTC(2012, 0, 1)),

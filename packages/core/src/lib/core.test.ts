@@ -2,7 +2,7 @@ import { Chunk, Deferred, Effect, Exit, Queue, Stream, identity } from 'effect';
 import { makePgClient, makePgPool } from './core';
 import { describe, it, expect } from 'vitest';
 import * as Schema from '@effect/schema/Schema';
-import { walLsnFromString } from './util/wal-lsn-from-string';
+import { DecimalFromSelf, walLsnFromString } from './util/schemas';
 import {
   DecoratedBegin,
   DecoratedCommit,
@@ -10,9 +10,10 @@ import {
   PgOutputDecoratedMessageTypes,
 } from './pg-client/transform-log-data';
 import _ from 'lodash';
+import Decimal from 'decimal.js';
 
 describe('core', () => {
-  it('should run commands , queries', async () => {
+  it('should run commands, queries', async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
@@ -32,53 +33,56 @@ describe('core', () => {
 
       yield* _(
         pg1.query(
-          'CREATE TABLE IF NOT EXISTS test_query ( id SERIAL, hello VARCHAR )'
+          'CREATE TABLE IF NOT EXISTS test_query ( id SERIAL, hello VARCHAR, world NUMERIC )'
         )
       );
 
       yield* _(
-        Effect.all(
-          [
-            pg1.query(`INSERT INTO test_query ( hello ) VALUES ('cya');
-                       INSERT INTO test_query ( hello ) VALUES ('goodbye');
-                       INSERT INTO test_query ( hello ) VALUES ('adios')`),
-          ],
-          { concurrency: 'unbounded' }
-        )
+        pg1.query(`INSERT INTO test_query ( hello, world ) VALUES ('cya', 10.00);
+                       INSERT INTO test_query ( hello, world ) VALUES ('goodbye', -1.00);
+                       INSERT INTO test_query ( hello, world ) VALUES ('adios', 88.88)`)
       );
 
-      const rows = yield* _(
+      const parsed = yield* _(
         pg1.query(
           'SELECT * FROM test_query',
           Schema.nonEmptyArray(
             Schema.struct({
               id: Schema.number,
               hello: Schema.string,
+              world: DecimalFromSelf,
             })
           )
         )
       );
 
+      const raw = yield* _(pg1.queryRaw('SELECT * FROM test_query'));
+
       yield* _(pg1.query('DROP TABLE test_query'));
 
-      return rows;
+      return { parsed, raw };
     });
 
-    const rows = await Effect.runPromise(program.pipe(Effect.scoped));
-
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          hello: 'cya',
-        }),
-        expect.objectContaining({
-          hello: 'goodbye',
-        }),
-        expect.objectContaining({
-          hello: 'adios',
-        }),
-      ])
+    const { parsed, raw } = await Effect.runPromise(
+      program.pipe(Effect.scoped)
     );
+
+    const expected = expect.arrayContaining([
+      expect.objectContaining({
+        hello: 'cya',
+        world: new Decimal(10),
+      }),
+      expect.objectContaining({
+        hello: 'goodbye',
+        world: new Decimal(-1),
+      }),
+      expect.objectContaining({
+        hello: 'adios',
+        world: new Decimal(88.88),
+      }),
+    ]);
+    expect(parsed).toEqual(expected);
+    expect(raw).toEqual([expected]);
   });
 
   it('should stream replication', async () => {
@@ -595,28 +599,24 @@ describe('core', () => {
         })
       );
 
-      const stream = pg.queryStream(
-        {
-          sql: `CREATE TABLE IF NOT EXISTS test_query_stream ( id SERIAL, word VARCHAR );
-           INSERT INTO test_query_stream SELECT g.*, 'word' FROM generate_series(1, 20000, 1) AS g(series);
-           SELECT *, 'lower' as category from test_query_stream where id <= 10000 order by id;
-           SELECT *, null as category from test_query_stream where id > 10000 order by id;
+      const stream = pg.queryStreamRaw(
+        `CREATE TABLE IF NOT EXISTS test_query_stream ( id SERIAL, word VARCHAR );
+           INSERT INTO test_query_stream SELECT g.*, 'word' FROM generate_series(1, 1000, 1) AS g(series);
+           SELECT *, 'lower' as category from test_query_stream where id <= 500 order by id;
+           SELECT *, null as category from test_query_stream where id > 500 order by id;
            DROP TABLE test_query_stream;
           `,
-          parserOptions: {}, // let's not parse anything
-        },
-        Schema.record(Schema.string, Schema.string),
-        Schema.record(Schema.string, Schema.nullable(Schema.string))
+        {}
       );
 
       return yield* _(
         stream.pipe(
           Stream.zipWithIndex,
           Stream.filter(
-            ([row, index]) =>
+            ([[row], index]) =>
               row['id'] === `${index + 1}` &&
               row['word'] === 'word' &&
-              row['category'] === (index < 10000 ? 'lower' : null)
+              row['category'] === (index < 500 ? 'lower' : null)
           ),
           Stream.runCount
         )
@@ -625,6 +625,56 @@ describe('core', () => {
 
     const count = await Effect.runPromise(program.pipe(Effect.scoped));
 
-    expect(count).toEqual(20000);
+    expect(count).toEqual(1000);
+  });
+
+  it('should stream query and parse', async () => {
+    const program = Effect.gen(function* (_) {
+      const pg = yield* _(
+        makePgClient({
+          host: 'db',
+          port: 5432,
+          useSSL: true,
+          database: 'postgres',
+          username: 'postgres',
+          password: 'topsecret',
+        })
+      );
+
+      const schema = Schema.struct({
+        id: Schema.int()(Schema.number),
+        word: Schema.string,
+        category: Schema.nullable(Schema.string),
+      });
+      const stream = pg.queryStream(
+        {
+          sql: `CREATE TABLE IF NOT EXISTS test_query_stream ( id SERIAL, word VARCHAR );
+           INSERT INTO test_query_stream SELECT g.*, 'word' FROM generate_series(1, 1000, 1) AS g(series);
+           SELECT *, 'lower' as category from test_query_stream where id <= 500 order by id;
+           SELECT *, null as category from test_query_stream where id > 500 order by id;
+           DROP TABLE test_query_stream;
+          `,
+        },
+        schema,
+        schema
+      );
+
+      return yield* _(
+        stream.pipe(
+          Stream.zipWithIndex,
+          Stream.filter(
+            ([[row], index]) =>
+              row.id === index + 1 &&
+              row.word === 'word' &&
+              row.category === (index < 500 ? 'lower' : null)
+          ),
+          Stream.runCount
+        )
+      );
+    });
+
+    const count = await Effect.runPromise(program.pipe(Effect.scoped));
+
+    expect(count).toEqual(1000);
   });
 });

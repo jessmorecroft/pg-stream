@@ -12,6 +12,7 @@ import {
   XLogData,
   Begin,
   Commit,
+  MakeValueTypeParserOptions,
 } from '../pg-protocol';
 import * as P from 'parser-ts/Parser';
 import * as S from 'parser-ts/string';
@@ -137,6 +138,7 @@ const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
 export const transformLogData = (
   tableInfo: TableInfoMap,
   logData: XLogData,
+  parserOptions?: MakeValueTypeParserOptions,
   begin?: DecoratedBegin
 ): Effect.Effect<
   never,
@@ -174,7 +176,7 @@ export const transformLogData = (
       });
       const colParsers = xlog.columns.map((col) => ({
         name: col.name,
-        parser: makeValueTypeParser(col.dataTypeId),
+        parser: makeValueTypeParser(col.dataTypeId, parserOptions),
       }));
       const { namespace, name } = xlog;
       tableInfo.set(xlog.id, {

@@ -1,8 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import * as E from 'fp-ts/Either';
 import * as S from 'parser-ts/string';
 import * as C from 'parser-ts/char';
 import * as P from 'parser-ts/Parser';
 import { pipe } from 'fp-ts/lib/function';
+import Decimal from 'decimal.js';
 
 /**
  * These types were obtained using the following query, which evolved from the one used by the brianc/node-pg-types lib:
@@ -84,12 +86,6 @@ export const PgTypes = {
 
 export type PgTypeName = keyof typeof PgTypes;
 
-export type BaseValueType = string | number | bigint | boolean | object;
-
-export type NestedArray<A> = (A | NestedArray<A>)[];
-
-export type ValueType = BaseValueType | NestedArray<BaseValueType>;
-
 export type MakeValueTypeParserOptions = {
   parseNumerics?: boolean;
   parseDates?: boolean;
@@ -98,22 +94,59 @@ export type MakeValueTypeParserOptions = {
   parseBooleans?: boolean;
   parseFloats?: boolean;
   parseJson?: boolean;
+  parseArrays?: boolean;
 };
 
-export const makeValueTypeParser = (
+export type NestedArray<A> = (A | NestedArray<A>)[];
+
+export type IfFlag<O, F extends string, T> = Required<O> extends {
+  [K in F]: boolean;
+}
+  ? O extends { [K in F]: false }
+    ? never // flag is false
+    : T // flag is true or boolean or an optional boolean
+  : never; // no flag in options type
+
+export type BaseValueType<O> =
+  | IfFlag<O, 'parseBooleans', boolean>
+  | IfFlag<O, 'parseBigInts', bigint>
+  | IfFlag<O, 'parseDates', Date>
+  | IfFlag<O, 'parseFloats', number>
+  | IfFlag<O, 'parseInts', number>
+  | IfFlag<O, 'parseNumerics', Decimal>
+  | IfFlag<O, 'parseJson', object>
+  | string
+  | null;
+
+export type ValueType<O = MakeValueTypeParserOptions> =
+  | BaseValueType<O>
+  | IfFlag<O, 'parseArrays', NestedArray<BaseValueType<O>>>;
+
+export const makeValueTypeParser = <O extends MakeValueTypeParserOptions>(
   oid: number,
-  options?: MakeValueTypeParserOptions
-): P.Parser<string, ValueType> => {
+  options?: O
+): P.Parser<string, ValueType<O>> => {
+  const opt = options ?? {
+    parseBooleans: true,
+    parseFloats: true,
+    parseInts: true,
+    parseJson: true,
+    parseArrays: true,
+    parseNumerics: false,
+    parseDates: false,
+    parseBigInts: false,
+  };
+
   const elementTypeOid = ArrayTypeMap.get(oid);
-  if (elementTypeOid) {
+  if (elementTypeOid && opt.parseArrays) {
     return makeArrayValueTypeParser(
-      makeBaseValueTypeParser(elementTypeOid, options)
-    );
+      makeBaseValueTypeParser(elementTypeOid, opt)
+    ) as P.Parser<string, ValueType<O>>;
   }
   return pipe(
-    makeBaseValueTypeParser(oid, options),
+    makeBaseValueTypeParser(oid, opt),
     P.chainFirst(() => P.eof())
-  );
+  ) as P.Parser<string, ValueType<O>>;
 };
 
 export const getTypeName = (
@@ -145,21 +178,10 @@ const ArrayTypeMap = new Map<number, number>(
   )
 );
 
-const makeBaseValueTypeParser: (
+const makeBaseValueTypeParser: <O extends MakeValueTypeParserOptions>(
   oid: number,
-  options?: MakeValueTypeParserOptions
-) => P.Parser<string, BaseValueType> = (
-  oid,
-  options = {
-    parseBooleans: true,
-    parseFloats: true,
-    parseInts: true,
-    parseJson: true,
-    parseNumerics: false,
-    parseDates: false,
-    parseBigInts: false,
-  }
-) => {
+  options: O
+) => P.Parser<string, BaseValueType<O>> = (oid, options) => {
   const baseType = BaseTypeMap.get(oid);
 
   switch (baseType) {
@@ -178,12 +200,15 @@ const makeBaseValueTypeParser: (
     }
     case 'numeric': {
       if (options.parseNumerics) {
-        return S.float;
+        return decimalParser;
       }
       return anyParser;
     }
     case 'bool': {
-      return boolParser;
+      if (options.parseBooleans) {
+        return boolParser;
+      }
+      return anyParser;
     }
     case 'float4':
     case 'float8': {
@@ -221,6 +246,18 @@ const dateParser = pipe(
     const dt = new Date(s);
     return isNaN(dt.getTime()) ? P.fail() : P.succeed(dt);
   })
+);
+
+const decimalParser = P.expected(
+  pipe(
+    S.fold([
+      S.maybe(C.oneOf('+-')),
+      C.many1(C.digit),
+      S.maybe(S.fold([C.char('.'), C.many1(C.digit)])),
+    ]),
+    P.map((s) => new Decimal(s))
+  ),
+  'a decimal'
 );
 
 const bigIntParser = P.expected(
