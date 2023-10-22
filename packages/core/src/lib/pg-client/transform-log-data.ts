@@ -96,13 +96,13 @@ export type TableInfoMap = Map<
   }
 >;
 
-export class TableInfoNotFoundError extends Data.TaggedClass(
+export class TableInfoNotFoundError extends Data.TaggedError(
   'TableInfoNotFoundError'
 )<{
   key: unknown;
 }> {}
 
-export class NoTransactionContextError extends Data.TaggedClass(
+export class NoTransactionContextError extends Data.TaggedError(
   'NoTransactionContexError'
 )<{
   logData: XLogData;
@@ -138,8 +138,8 @@ const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
 export const transformLogData = (
   tableInfo: TableInfoMap,
   logData: XLogData,
-  parserOptions?: MakeValueTypeParserOptions,
-  begin?: DecoratedBegin
+  begin?: DecoratedBegin,
+  parserOptions?: MakeValueTypeParserOptions
 ): Effect.Effect<
   never,
   TableInfoNotFoundError | NoTransactionContextError,

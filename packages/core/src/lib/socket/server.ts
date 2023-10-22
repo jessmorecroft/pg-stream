@@ -25,7 +25,7 @@ export interface SSLOptions {
   certFile: string;
 }
 
-export class ServerError extends Data.TaggedClass('ServerError')<{
+export class ServerError extends Data.TaggedError('ServerError')<{
   cause: Error;
 }> {}
 

@@ -48,7 +48,7 @@ const program = Effect.gen(function* (_) {
 
   return yield* _(
     stream.pipe(
-      Stream.tap((animal) => {
+      Stream.tap(([animal]) => {
         if (animal.kind === 'cat') {
           return Effect.log(`${animal.name} has ${animal.lives} lives!`);
         }

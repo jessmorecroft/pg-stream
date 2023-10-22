@@ -3,7 +3,7 @@ import { Chunk, Data, Effect, Either, Option, Scope, Sink } from 'effect';
 import { Writable } from 'stream';
 import { listen } from '../util/util';
 
-export class WritableError extends Data.TaggedClass('WritableError')<{
+export class WritableError extends Data.TaggedError('WritableError')<{
   cause: Error;
 }> {}
 

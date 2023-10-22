@@ -60,6 +60,7 @@ import {
 import * as stream from '../stream';
 import { Duplex, Readable, Writable } from 'stream';
 import { connect, end, clientTlsConnect } from '../socket';
+import { SocketError } from '../socket/socket';
 
 export interface Options {
   host: string;
@@ -79,16 +80,39 @@ export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
 
-export class PgParseError extends Data.TaggedClass('PgParseError')<{
+export class PgParseError extends Data.TaggedError('PgParseError')<{
   message: string;
 }> {}
 
-export class PgServerError extends Data.TaggedClass('PgServerError')<{
+export class PgServerError extends Data.TaggedError('PgServerError')<{
   error: ErrorResponse;
 }> {}
 
-export class PgFailedAuth extends Data.TaggedClass('PgFailedAuth')<{
+export class PgFailedAuth extends Data.TaggedError('PgFailedAuth')<{
   reply: unknown;
+  msg?: string;
+}> {}
+
+export class XLogProcessorError<E> extends Data.TaggedError(
+  'XLogProcessorError'
+)<{
+  cause: E;
+}> {}
+
+export class PgClientError extends Data.TaggedError('PgClientError')<{
+  cause:
+    | WritableError
+    | ReadableError
+    | SocketError
+    | ParseMessageError
+    | ParseMessageGroupError
+    | NoMoreMessagesError
+    | PgServerError
+    | PgParseError
+    | PgFailedAuth
+    | TableInfoNotFoundError
+    | NoTransactionContextError
+    | UnexpectedMessageError;
   msg?: string;
 }> {}
 
@@ -177,6 +201,9 @@ type NoneOneOrMany<T extends [...any]> = T extends [infer A]
   ? void
   : T;
 
+const mapPgClientError = (cause: PgClientError['cause']): PgClientError =>
+  new PgClientError({ cause });
+
 const transformRowDescription: <OT extends MakeValueTypeParserOptions>(
   rowDescription: RowDescription,
   options?: OT
@@ -233,12 +260,7 @@ export const queryStreamRaw =
     parserOptions?: O
   ): Stream.Stream<
     never,
-    | WritableError
-    | ReadableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | PgServerError
-    | PgParseError,
+    PgClientError,
     [Record<string, ValueType<O>>, number]
   > => {
     type State = {
@@ -301,7 +323,8 @@ export const queryStreamRaw =
               (_): _ is [Record<string, ValueType<O>>, number] => !!_
             )
           )
-      )
+      ),
+      Stream.mapError(mapPgClientError)
     );
   };
 
@@ -314,13 +337,7 @@ export const queryStream =
     ...schemas: S
   ): Stream.Stream<
     never,
-    | WritableError
-    | ReadableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | PgServerError
-    | PgParseError
-    | ParseMessageGroupError,
+    PgClientError,
     readonly [SchemaTypesUnion<S>, number]
   > => {
     const { sql, parserOptions } =
@@ -367,7 +384,10 @@ export const queryStream =
             (a) => [{ schema, left }, [a, index]]
           );
         }
-      )
+      ),
+      Stream.catchTags({
+        PgParseError: (cause) => Effect.fail(new PgClientError({ cause })),
+      })
     );
   };
 
@@ -376,17 +396,7 @@ const queryRaw =
   <O extends MakeValueTypeParserOptions>(
     sql: string,
     parserOptions?: O
-  ): Effect.Effect<
-    never,
-    | WritableError
-    | ReadableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | PgServerError
-    | PgParseError
-    | ParseMessageGroupError,
-    Record<string, ValueType<O>>[][]
-  > =>
+  ): Effect.Effect<never, PgClientError, Record<string, ValueType<O>>[][]> =>
     Effect.gen(function* (_) {
       yield* _(write(socket)({ type: 'Query', sql }));
 
@@ -435,13 +445,7 @@ const queryRaw =
         .map(({ rows }) => rows)
         .filter(O.isSome)
         .map((rows) => rows.value);
-    });
-
-/*export const copyFrom =
-  (socket: Duplex) =>
-  (tableName: string) =>
-  <E>(records: Stream.Stream<never, E, Record<string, string | null>>) => {};
-*/
+    }).pipe(Effect.mapError(mapPgClientError));
 
 export const query =
   (socket: Duplex) =>
@@ -450,17 +454,7 @@ export const query =
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
     ...schemas: S
-  ): Effect.Effect<
-    never,
-    | WritableError
-    | ReadableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | PgServerError
-    | PgParseError
-    | ParseMessageGroupError,
-    NoneOneOrMany<SchemaTypes<S>>
-  > => {
+  ): Effect.Effect<never, PgClientError, NoneOneOrMany<SchemaTypes<S>>> => {
     const { sql, parserOptions } =
       typeof sqlOrOptions === 'string'
         ? { sql: sqlOrOptions, parserOptions: undefined }
@@ -486,6 +480,9 @@ export const query =
           return parsed[0];
         }
         return parsed;
+      }),
+      Effect.catchTags({
+        PgParseError: (cause) => Effect.fail(new PgClientError({ cause })),
       })
     );
   };
@@ -497,17 +494,7 @@ export const queryMany =
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
     schema: S
-  ): Effect.Effect<
-    never,
-    | WritableError
-    | ReadableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | PgServerError
-    | PgParseError
-    | ParseMessageGroupError,
-    readonly Schema.Schema.To<S>[]
-  > => {
+  ): Effect.Effect<never, PgClientError, readonly Schema.Schema.To<S>[]> => {
     const { sql, parserOptions } =
       typeof sqlOrOptions === 'string'
         ? { sql: sqlOrOptions, parserOptions: undefined }
@@ -524,7 +511,10 @@ export const queryMany =
           ),
           Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
         )
-      )
+      ),
+      Effect.catchTags({
+        PgParseError: (cause) => Effect.fail(new PgClientError({ cause })),
+      })
     );
   };
 
@@ -542,21 +532,7 @@ export const recvlogical =
     processor: XLogProcessor<E, T>;
     parserOptions?: MakeValueTypeParserOptions;
     signal?: Deferred.Deferred<never, void>;
-  }): Effect.Effect<
-    never,
-    | WritableError
-    | ReadableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | UnexpectedMessageError
-    | PgServerError
-    | PgParseError
-    | ParseMessageGroupError
-    | TableInfoNotFoundError
-    | NoTransactionContextError
-    | E,
-    void
-  > =>
+  }): Effect.Effect<never, PgClientError | XLogProcessorError<E>, void> =>
     Effect.gen(function* (_) {
       yield* _(
         write(socket)({
@@ -607,6 +583,7 @@ export const recvlogical =
               transformLogData(
                 map,
                 log,
+                begin,
                 parserOptions ?? {
                   parseArrays: true,
                   parseBigInts: true,
@@ -616,8 +593,7 @@ export const recvlogical =
                   parseJson: true,
                   parseInts: true,
                   parseNumerics: true,
-                },
-                begin
+                }
               ).pipe(
                 Effect.map(
                   (
@@ -665,9 +641,12 @@ export const recvlogical =
           stream.pipe(
             Stream.mapChunksEffect((chunk) =>
               Effect.map(
-                processor.process(
-                  key,
-                  Chunk.map(chunk, ([msg]) => msg)
+                Effect.mapError(
+                  processor.process(
+                    key,
+                    Chunk.map(chunk, ([msg]) => msg)
+                  ),
+                  (cause) => new XLogProcessorError<E>({ cause })
                 ),
                 () => Chunk.map(chunk, ([, log]) => log.walEnd)
               )
@@ -803,7 +782,15 @@ export const recvlogical =
       );
 
       yield* _(Effect.forEach(commandTags, (_) => Effect.log(_)));
-    }).pipe(Effect.scoped);
+    }).pipe(
+      Effect.scoped,
+      Effect.mapError((cause) => {
+        if (cause._tag !== 'XLogProcessorError') {
+          return new PgClientError({ cause });
+        }
+        return cause;
+      })
+    );
 
 export const make = ({ useSSL, ...options }: Options) =>
   Effect.gen(function* (_) {
@@ -821,12 +808,10 @@ export const make = ({ useSSL, ...options }: Options) =>
       } else {
         if (useSSL) {
           return yield* _(
-            Effect.fail(
-              new PgFailedAuth({
-                msg: 'Postgres server does not support SSL',
-                reply,
-              })
-            )
+            new PgFailedAuth({
+              msg: 'Postgres server does not support SSL',
+              reply,
+            })
           );
         }
 
@@ -847,4 +832,4 @@ export const make = ({ useSSL, ...options }: Options) =>
       recvlogical: recvlogical(socket),
       ...info,
     };
-  });
+  }).pipe(Effect.mapError((cause) => new PgClientError({ cause })));

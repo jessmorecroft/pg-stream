@@ -18,7 +18,7 @@ export type Options = Omit<pgClient.Options, 'useSSL' | 'host' | 'port'> & {
   ssl?: SSLOptions;
 };
 
-export class PgTestServerError extends Data.TaggedClass('PgTestServerError')<{
+export class PgTestServerError extends Data.TaggedError('PgTestServerError')<{
   msg?: string;
 }> {}
 

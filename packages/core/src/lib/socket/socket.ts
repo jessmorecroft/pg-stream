@@ -8,7 +8,7 @@ interface Options {
   port: number;
 }
 
-export class SocketError extends Data.TaggedClass('SocketError')<{
+export class SocketError extends Data.TaggedError('SocketError')<{
   cause: Error;
 }> {}
 

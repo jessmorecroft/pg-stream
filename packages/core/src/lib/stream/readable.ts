@@ -18,25 +18,25 @@ import * as E from 'fp-ts/Either';
 import * as B from '../parser/buffer';
 import * as S from 'parser-ts/Stream';
 
-export class ReadableError extends Data.TaggedClass('ReadableError')<{
+export class ReadableError extends Data.TaggedError('ReadableError')<{
   cause: Error;
 }> {}
 
-export class ParseMessageError extends Data.TaggedClass('ParseMessageError')<{
+export class ParseMessageError extends Data.TaggedError('ParseMessageError')<{
   cause: ParseError<number>;
 }> {}
 
-export class ParseMessageGroupError extends Data.TaggedClass(
+export class ParseMessageGroupError extends Data.TaggedError(
   'ParseMessageGroupError'
 )<{
   cause: ParseError<unknown>;
 }> {}
 
-export class NoMoreMessagesError extends Data.TaggedClass(
+export class NoMoreMessagesError extends Data.TaggedError(
   'NoMoreMessagesError'
 )<Record<string, never>> {}
 
-export class UnexpectedMessageError extends Data.TaggedClass(
+export class UnexpectedMessageError extends Data.TaggedError(
   'UnexpectedMessageError'
 )<{
   unexpected: unknown;
