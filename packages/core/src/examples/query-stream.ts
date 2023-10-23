@@ -1,5 +1,5 @@
 import { Schema } from '@effect/schema';
-import { makePgClient } from '../index';
+import { makePgClient, ALL_ENABLED_PARSER_OPTIONS } from '../index';
 import { Effect, Stream } from 'effect';
 import { inspect } from 'util';
 
@@ -68,7 +68,8 @@ const program = Effect.gen(function* (_) {
         {
           sql: 'SELECT * FROM dog',
           parserOptions: {
-            parseInts: true,
+            ...ALL_ENABLED_PARSER_OPTIONS,
+            parseDates: false,
           },
         },
         dogSchema2

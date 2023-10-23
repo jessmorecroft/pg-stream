@@ -1,8 +1,7 @@
 import * as P from 'parser-ts/Parser';
 import { pipe } from 'fp-ts/function';
 import { Effect } from 'effect';
-import { createHash, randomBytes } from 'crypto';
-import { Hi, hmacSha256, sha256, xorBuffers } from './util';
+import { BinaryLike, createHash, createHmac, randomBytes } from 'crypto';
 import {
   PgFailedAuth,
   isBackendKeyData,
@@ -12,11 +11,38 @@ import {
   write,
   readOrFail,
   readUntilReady,
-} from './pg-client';
+} from './util';
 import { hasTypeOf } from '../stream';
 import { Duplex } from 'stream';
+import * as _ from 'lodash';
 
-export const startup = ({
+const sha256 = (text: BinaryLike) => {
+  return createHash('sha256').update(text).digest();
+};
+
+const hmacSha256 = (key: BinaryLike, msg: BinaryLike) => {
+  return createHmac('sha256', key).update(msg).digest();
+};
+
+const xorBuffers = (a: Buffer, b: Buffer) =>
+  Buffer.from(a.map((_, i) => a[i] ^ b[i]));
+
+const Hi = (password: string, saltBytes: Buffer, iterations: number) => {
+  let ui1 = hmacSha256(
+    password,
+    Buffer.concat([saltBytes, Buffer.from([0, 0, 0, 1])])
+  );
+
+  let ui = ui1;
+  _.times(iterations - 1, () => {
+    ui1 = hmacSha256(password, ui1);
+    ui = xorBuffers(ui, ui1);
+  });
+
+  return ui;
+};
+
+export const authenticate = ({
   socket,
   database,
   username,

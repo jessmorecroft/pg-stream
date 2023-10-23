@@ -122,20 +122,29 @@ export type ValueType<O = MakeValueTypeParserOptions> =
   | BaseValueType<O>
   | IfFlag<O, 'parseArrays', NestedArray<BaseValueType<O>>>;
 
+export const ALL_ENABLED_PARSER_OPTIONS: MakeValueTypeParserOptions = {
+  parseBooleans: true,
+  parseFloats: true,
+  parseInts: true,
+  parseJson: true,
+  parseArrays: true,
+  parseNumerics: true,
+  parseDates: true,
+  parseBigInts: true,
+};
+
+export const DEFAULT_PARSER_OPTIONS: MakeValueTypeParserOptions = {
+  ...ALL_ENABLED_PARSER_OPTIONS,
+  parseNumerics: false,
+  parseDates: false,
+  parseBigInts: false,
+};
+
 export const makeValueTypeParser = <O extends MakeValueTypeParserOptions>(
   oid: number,
   options?: O
 ): P.Parser<string, ValueType<O>> => {
-  const opt = options ?? {
-    parseBooleans: true,
-    parseFloats: true,
-    parseInts: true,
-    parseJson: true,
-    parseArrays: true,
-    parseNumerics: false,
-    parseDates: false,
-    parseBigInts: false,
-  };
+  const opt = options ?? (DEFAULT_PARSER_OPTIONS as O);
 
   const elementTypeOid = ArrayTypeMap.get(oid);
   if (elementTypeOid && opt.parseArrays) {

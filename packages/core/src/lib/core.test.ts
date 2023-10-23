@@ -486,7 +486,6 @@ describe('core', () => {
       const pg1 = yield* _(pgPool.get());
       const pg2 = yield* _(pgPool.get());
 
-      yield* _(pg1.query('DROP PUBLICATION IF EXISTS test_pub4'));
       yield* _(pg1.query('CREATE PUBLICATION test_pub4 FOR ALL TABLES'));
 
       yield* _(
@@ -543,7 +542,7 @@ describe('core', () => {
       );
 
       // the original connection should still work
-      yield* _(pg1.query('select 42;', Schema.any));
+      yield* _(pg1.query('DROP PUBLICATION IF EXISTS test_pub4'));
 
       return yield* _(
         Queue.takeAll(queue).pipe(Effect.map(Chunk.toReadonlyArray))

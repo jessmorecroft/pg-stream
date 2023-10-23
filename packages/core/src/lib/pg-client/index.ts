@@ -1,5 +1,4 @@
-import { make as makePgClient } from './pg-client';
-import { make as makePgPool } from './pg-pool';
+export { ALL_ENABLED_PARSER_OPTIONS } from '../pg-protocol';
 
 export type {
   DecoratedBegin,
@@ -12,14 +11,13 @@ export type {
   PgOutputDecoratedMessageTypes,
 } from './transform-log-data';
 
-export { makePgClient, makePgPool };
-
 export {
-  PgClient,
   XLogProcessor,
   PgFailedAuth,
   PgParseError,
   PgServerError,
-} from './pg-client';
+} from './util';
 
-export { PgPool } from './pg-pool';
+export { PgClient, make as makePgClient } from './pg-client';
+
+export { PgPool, make as makePgPool } from './pg-pool';

@@ -1,33 +1,200 @@
-import { ErrorResponse, NoticeResponse } from '../pg-protocol';
-import { BinaryLike, createHash, createHmac } from 'crypto';
-import { Effect } from 'effect';
-import * as _ from 'lodash';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Chunk, Data, Effect, pipe } from 'effect';
+import * as Schema from '@effect/schema/Schema';
+import * as P from 'parser-ts/Parser';
+import * as S from 'parser-ts/string';
+import * as E from 'fp-ts/Either';
+import {
+  DataRow,
+  ErrorResponse,
+  NoticeResponse,
+  PgClientMessageTypes,
+  RowDescription,
+  pgServerMessageParser,
+} from '../pg-protocol/message-parsers';
+import {
+  ALL_ENABLED_PARSER_OPTIONS,
+  MakeValueTypeParserOptions,
+  ValueType,
+  makePgClientMessage,
+  makeValueTypeParser,
+} from '../pg-protocol';
+import { PgServerMessageTypes } from '../pg-protocol/message-parsers';
+import {
+  NoTransactionContextError,
+  PgOutputDecoratedMessageTypes,
+  TableInfoNotFoundError,
+} from './transform-log-data';
+import {
+  NoMoreMessagesError,
+  ParseMessageError,
+  ParseMessageGroupError,
+  ReadableError,
+  UnexpectedMessageError,
+  WritableError,
+  hasTypeOf,
+} from '../stream';
+import * as stream from '../stream';
+import { Readable, Writable } from 'stream';
+import { SocketError } from '../socket/socket';
 
-export const sha256 = (text: BinaryLike) => {
-  return createHash('sha256').update(text).digest();
+export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
+  filter(msg: PgOutputDecoratedMessageTypes): msg is T;
+  key?(msg: T): string;
+  process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
+}
+
+export class PgParseError extends Data.TaggedError('PgParseError')<{
+  message: string;
+}> {}
+
+export class PgServerError extends Data.TaggedError('PgServerError')<{
+  error: ErrorResponse;
+}> {}
+
+export class PgFailedAuth extends Data.TaggedError('PgFailedAuth')<{
+  reply: unknown;
+  msg?: string;
+}> {}
+
+export class XLogProcessorError<E> extends Data.TaggedError(
+  'XLogProcessorError'
+)<{
+  cause: E;
+}> {}
+
+export class PgClientError extends Data.TaggedError('PgClientError')<{
+  cause:
+    | WritableError
+    | ReadableError
+    | SocketError
+    | ParseMessageError
+    | ParseMessageGroupError
+    | NoMoreMessagesError
+    | PgServerError
+    | PgParseError
+    | PgFailedAuth
+    | TableInfoNotFoundError
+    | NoTransactionContextError
+    | UnexpectedMessageError;
+  msg?: string;
+}> {}
+
+type MessageTypes = Exclude<
+  PgServerMessageTypes,
+  NoticeResponse | ErrorResponse
+>;
+
+export type SchemaTypes<A extends [...Schema.Schema<any>[]]> = {
+  [K in keyof A]: Schema.Schema.To<A[K]>;
 };
 
-export const hmacSha256 = (key: BinaryLike, msg: BinaryLike) => {
-  return createHmac('sha256', key).update(msg).digest();
-};
+export const item = P.item<MessageTypes>();
 
-export const xorBuffers = (a: Buffer, b: Buffer) =>
-  Buffer.from(a.map((_, i) => a[i] ^ b[i]));
+export const isReadyForQuery = hasTypeOf('ReadyForQuery');
+export const isNoticeResponse = hasTypeOf('NoticeResponse');
+export const isErrorResponse = hasTypeOf('ErrorResponse');
+export const isCommandComplete = hasTypeOf('CommandComplete');
+export const isDataRow = hasTypeOf('DataRow');
+export const isRowDescription = hasTypeOf('RowDescription');
+export const isParameterStatus = hasTypeOf('ParameterStatus');
+export const isBackendKeyData = hasTypeOf('BackendKeyData');
 
-export const Hi = (password: string, saltBytes: Buffer, iterations: number) => {
-  let ui1 = hmacSha256(
-    password,
-    Buffer.concat([saltBytes, Buffer.from([0, 0, 0, 1])])
+export const read: (
+  readable: Readable
+) => Effect.Effect<
+  never,
+  Effect.Effect.Error<ReturnType<typeof stream.read>> | PgServerError,
+  MessageTypes
+> = (readable) =>
+  Effect.filterOrElse(
+    stream.read(readable, stream.decode(pgServerMessageParser)),
+    (msg): msg is MessageTypes =>
+      !isNoticeResponse(msg) && !isErrorResponse(msg),
+    (msg) => {
+      if (isNoticeResponse(msg)) {
+        return Effect.flatMap(logBackendMessage(msg), () => read(readable));
+      }
+      if (isErrorResponse(msg)) {
+        return Effect.flatMap(logBackendMessage(msg), () =>
+          Effect.fail(new PgServerError({ error: msg }))
+        );
+      }
+      return Effect.never;
+    }
   );
 
-  let ui = ui1;
-  _.times(iterations - 1, () => {
-    ui1 = hmacSha256(password, ui1);
-    ui = xorBuffers(ui, ui1);
-  });
+export const readOrFail =
+  (readable: Readable) =>
+  <K extends MessageTypes['type']>(
+    ...types: [K, ...K[]]
+  ): Effect.Effect<
+    never,
+    Effect.Effect.Error<ReturnType<typeof read>> | UnexpectedMessageError,
+    MessageTypes & { type: K }
+  > =>
+    stream.readOrFail(read(readable))(...types);
 
-  return ui;
-};
+export const readUntilReady: (
+  readable: Readable
+) => <A>(
+  parser: P.Parser<MessageTypes, A>
+) => Effect.Effect<
+  never,
+  Effect.Effect.Error<ReturnType<typeof read>> | ParseMessageGroupError,
+  A
+> = (readable) => (parser) =>
+  stream.readMany(read(readable))(
+    parser,
+    ({ type }) => type === 'ReadyForQuery'
+  );
+
+export const write: (
+  writable: Writable
+) => (
+  message: PgClientMessageTypes
+) => Effect.Effect<never, WritableError, void> = (writable) =>
+  stream.write(writable, makePgClientMessage);
+
+export const transformRowDescription: <OT extends MakeValueTypeParserOptions>(
+  rowDescription: RowDescription,
+  options?: OT
+) => { name: string; parser: P.Parser<string, ValueType<OT>> }[] = (
+  { fields },
+  options = ALL_ENABLED_PARSER_OPTIONS as any
+) =>
+  fields.map(({ name, dataTypeId }) => ({
+    name,
+    parser: makeValueTypeParser(dataTypeId, options),
+  }));
+
+export const transformDataRow = <OT extends MakeValueTypeParserOptions>({
+  rowParsers,
+  dataRow,
+}: {
+  rowParsers: { name: string; parser: P.Parser<string, ValueType<OT>> }[];
+  dataRow: DataRow;
+}) =>
+  rowParsers.reduce(
+    (acc: Record<string, ValueType<OT>>, { name, parser }, index) => {
+      const input = dataRow.values[index];
+      if (input !== null) {
+        const parsed = pipe(
+          S.run(input)(parser),
+          E.fold(
+            (): ValueType<OT> => {
+              // Failed to parse row value. Just use the original input.
+              return input;
+            },
+            ({ value }) => value
+          )
+        );
+        return { ...acc, [name]: parsed };
+      }
+      return { ...acc, [name]: input };
+    },
+    {}
+  );
 
 export const logBackendMessage = (message: NoticeResponse | ErrorResponse) => {
   const pairs =
