@@ -30,7 +30,13 @@ export class ParseMessageGroupError extends Data.TaggedError(
   'ParseMessageGroupError'
 )<{
   cause: ParseError<unknown>;
-}> {}
+}> {
+  override toString() {
+    return JSON.stringify(this, (key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    );
+  }
+}
 
 export class NoMoreMessagesError extends Data.TaggedError(
   'NoMoreMessagesError'

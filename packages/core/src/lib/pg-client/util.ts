@@ -39,8 +39,8 @@ import { Readable, Writable } from 'stream';
 import { SocketError } from '../socket/socket';
 
 export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
+  key?: ((msg: T) => string) | 'serial' | 'table';
   filter(msg: PgOutputDecoratedMessageTypes): msg is T;
-  key?(msg: T): string;
   process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
 }
 

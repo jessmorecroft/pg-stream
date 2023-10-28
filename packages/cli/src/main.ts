@@ -1,68 +1,107 @@
-import { makePgClient } from '@jmorecroft67/pg-stream-core';
-import { Effect, Stream } from 'effect';
-import * as Schema from '@effect/schema/Schema';
+import {
+  DecoratedDelete,
+  DecoratedInsert,
+  DecoratedUpdate,
+  PgOutputDecoratedMessageTypes,
+  makePgPool,
+} from '@jmorecroft67/pg-stream-core';
+import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from 'effect';
 
 const program = Effect.gen(function* (_) {
-  const pg = yield* _(
-    makePgClient({
-      username: 'postgres',
-      password: 'topsecret',
-      database: 'postgres',
+  const pgPool = yield* _(
+    makePgPool({
       host: 'localhost',
       port: 5432,
       useSSL: true,
+      database: 'postgres',
+      username: 'postgres',
+      password: 'topsecret',
+      min: 1,
+      max: 10,
+      timeToLive: '1 minutes',
+      replication: true,
     })
   );
 
-  const dogSchema = Schema.struct({
-    id: Schema.number,
-    name: Schema.string,
-    age: Schema.number,
-    bark: Schema.literal('woof', 'bowow', 'ruff'),
-    last_updated: Schema.DateFromSelf,
-  });
+  const pg1 = yield* _(pgPool.get());
+  const pg2 = yield* _(pgPool.get());
 
-  const catSchema = Schema.struct({
-    id: Schema.number,
-    name: Schema.string,
-    age: Schema.number,
-    lives: Schema.between(1, 9)(Schema.number),
-    last_updated: Schema.DateFromSelf,
-  });
+  yield* _(pg1.query('CREATE PUBLICATION example_publication FOR ALL TABLES'));
 
-  const stream = pg.queryStream(
-    `
-    create type bark_type AS ENUM ('woof', 'bowow', 'ruff');
-    create table dog (id serial, name text, age int, bark bark_type, last_updated timestamp);
-    insert into dog values (1, 'bingo', 2, 'woof', now()), (2, 'spot', 7, 'ruff', now());
-    select * from dog;
-    drop table dog;
-    drop type bark_type;
-    create table cat (id serial, name text, age int, lives int, last_updated timestamp);
-    insert into cat values (1, 'garfield', 2, 9, now()), (2, 'simba', 7, 2, now());
-    select * from cat;
-    drop table cat;`,
-    Schema.attachPropertySignature('kind', 'dog')(dogSchema),
-    Schema.attachPropertySignature('kind', 'cat')(catSchema)
-  );
-
-  return yield* _(
-    stream.pipe(
-      Stream.tap(([animal]) => {
-        if (animal.kind === 'cat') {
-          return Effect.log(`${animal.name} has ${animal.lives} lives!`);
-        }
-        return Effect.log(
-          `${animal.name}'s bark sounds like "${animal.bark}"!`
-        );
-      }),
-      Stream.runCollect
+  yield* _(
+    pg1.queryRaw(
+      'CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT'
     )
   );
+
+  type InsertOrUpdateOrDelete =
+    | DecoratedInsert
+    | DecoratedUpdate
+    | DecoratedDelete;
+
+  const queue = yield* _(Queue.unbounded<[string, InsertOrUpdateOrDelete]>());
+
+  const signal = yield* _(Deferred.make<never, void>());
+
+  const changes = yield* _(
+    Effect.zipRight(
+      pg1.recvlogical({
+        slotName: 'example_slot',
+        publicationNames: ['example_publication'],
+        processor: {
+          filter: (
+            msg: PgOutputDecoratedMessageTypes
+          ): msg is InsertOrUpdateOrDelete =>
+            msg.type === 'Insert' ||
+            msg.type === 'Update' ||
+            msg.type === 'Delete',
+          key: 'table',
+          process: (key, data) =>
+            queue.offerAll(Chunk.map(data, (_) => [key, _])),
+        },
+        signal,
+      }),
+      pg2
+        .query(
+          `
+  CREATE TABLE example
+   (id SERIAL PRIMARY KEY, message VARCHAR NOT NULL);
+  INSERT INTO example VALUES (1, 'hello'), (2, 'world');
+  ALTER TABLE example REPLICA IDENTITY FULL;
+  UPDATE example SET message = 'goodbye'
+    WHERE id = 1;
+  DELETE FROM example
+    WHERE id = 2;
+  DROP TABLE example;`
+        )
+        .pipe(
+          Effect.flatMap(() =>
+            Stream.fromQueue(queue).pipe(
+              Stream.map(([key, data]) => ({ ...data, key })),
+              Stream.takeUntil((msg) => msg.type === 'Delete'),
+              Stream.runCollect
+            )
+          ),
+          Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined)))
+        ),
+      {
+        concurrent: true,
+      }
+    )
+  );
+
+  yield* _(
+    Console.table(Chunk.toReadonlyArray(changes), [
+      'type',
+      'key',
+      'oldRecord',
+      'newRecord',
+    ])
+  );
+
+  yield* _(pg1.query('DROP PUBLICATION example_publication'));
 });
 
 Effect.runPromise(
   program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
-).then((results) => {
-  console.log('returned:', results);
-});
+);

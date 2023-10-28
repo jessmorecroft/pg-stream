@@ -53,6 +53,8 @@ import {
 import * as stream from '../stream';
 import { walLsnFromString } from '../util/schemas';
 
+const isCopyData = hasTypeOf('CopyData');
+
 export const recvlogical =
   (socket: Duplex) =>
   <E, T extends PgOutputDecoratedMessageTypes>({
@@ -103,7 +105,7 @@ export const recvlogical =
           .readStream(read(socket), (e) => e._tag === 'NoMoreMessagesError')
           .pipe(
             Stream.takeUntil((_) => _.type === 'CopyDone'),
-            Stream.filter(hasTypeOf('CopyData')),
+            Stream.filter(isCopyData),
             Stream.tap((msg) => {
               if (
                 msg.payload.type === 'XLogData' &&
@@ -171,11 +173,18 @@ export const recvlogical =
 
       const dataStream = filtered.pipe(
         Stream.bufferChunks({ capacity: 16 }),
-        Stream.groupByKey(
-          ([msg]) =>
-            processor.key?.(msg) ??
-            ('namespace' in msg ? `${msg.namespace}.${msg.name}` : '')
-        ),
+        Stream.groupByKey(([msg]) => {
+          if (processor.key) {
+            if (processor.key === 'serial') {
+              return '';
+            }
+            if (processor.key === 'table') {
+              return 'namespace' in msg ? `${msg.namespace}.${msg.name}` : '';
+            }
+            return processor.key(msg);
+          }
+          return '';
+        }),
         GroupBy.evaluate((key, stream) =>
           stream.pipe(
             Stream.mapChunksEffect((chunk) =>
@@ -305,15 +314,22 @@ export const recvlogical =
         readUntilReady(socket)(
           pipe(
             item,
-            P.filter(isCommandComplete),
-            P.map(({ commandTag }) => commandTag),
+            P.filter(isCopyData),
             P.many,
-            P.bindTo('commandTags'),
-            P.chainFirst(() =>
+            P.chain(() =>
               pipe(
                 item,
-                P.filter(isReadyForQuery),
-                P.chain(() => P.eof())
+                P.filter(isCommandComplete),
+                P.map(({ commandTag }) => commandTag),
+                P.many,
+                P.bindTo('commandTags'),
+                P.chainFirst(() =>
+                  pipe(
+                    item,
+                    P.filter(isReadyForQuery),
+                    P.chain(() => P.eof())
+                  )
+                )
               )
             )
           )

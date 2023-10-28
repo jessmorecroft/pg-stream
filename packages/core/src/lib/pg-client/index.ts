@@ -1,4 +1,8 @@
-export { ALL_ENABLED_PARSER_OPTIONS } from '../pg-protocol';
+export {
+  ALL_ENABLED_PARSER_OPTIONS,
+  DEFAULT_PARSER_OPTIONS,
+  NONE_ENABLED_PARSER_OPTIONS,
+} from '../pg-protocol';
 
 export type {
   DecoratedBegin,

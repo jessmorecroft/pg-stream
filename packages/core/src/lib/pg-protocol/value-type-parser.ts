@@ -140,6 +140,8 @@ export const DEFAULT_PARSER_OPTIONS: MakeValueTypeParserOptions = {
   parseBigInts: false,
 };
 
+export const NONE_ENABLED_PARSER_OPTIONS = {};
+
 export const makeValueTypeParser = <O extends MakeValueTypeParserOptions>(
   oid: number,
   options?: O

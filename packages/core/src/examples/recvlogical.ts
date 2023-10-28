@@ -1,11 +1,11 @@
-import { Schema } from '@effect/schema';
 import {
+  DecoratedDelete,
   DecoratedInsert,
+  DecoratedUpdate,
   PgOutputDecoratedMessageTypes,
   makePgPool,
 } from '../index';
-import { Deferred, Effect, Exit, Queue, Stream } from 'effect';
-import { inspect } from 'util';
+import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from 'effect';
 
 const program = Effect.gen(function* (_) {
   const pgPool = yield* _(
@@ -26,56 +26,58 @@ const program = Effect.gen(function* (_) {
   const pg1 = yield* _(pgPool.get());
   const pg2 = yield* _(pgPool.get());
 
-  yield* _(pg1.query('CREATE PUBLICATION recvlogical_example FOR ALL TABLES'));
+  //yield* _(pg1.query('CREATE PUBLICATION example_publication FOR ALL TABLES'));
 
   yield* _(
-    pg1.query(
-      'CREATE_REPLICATION_SLOT temp_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
-      Schema.any
+    pg1.queryRaw(
+      'CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT'
     )
   );
 
-  const queue = yield* _(Queue.unbounded<DecoratedInsert>());
+  type InsertOrUpdateOrDelete =
+    | DecoratedInsert
+    | DecoratedUpdate
+    | DecoratedDelete;
+
+  const queue = yield* _(Queue.unbounded<[string, InsertOrUpdateOrDelete]>());
 
   const signal = yield* _(Deferred.make<never, void>());
 
-  const messages = yield* _(
+  const changes = yield* _(
     Effect.zipRight(
       pg1.recvlogical({
-        slotName: 'temp_slot',
-        publicationNames: ['recvlogical_example'],
+        slotName: 'example_slot',
+        publicationNames: ['example_publication'],
         processor: {
           filter: (
             msg: PgOutputDecoratedMessageTypes
-          ): msg is DecoratedInsert => msg.type === 'Insert',
-          process: (_, data) => queue.offerAll(data),
+          ): msg is InsertOrUpdateOrDelete =>
+            msg.type === 'Insert' ||
+            msg.type === 'Update' ||
+            msg.type === 'Delete',
+          key: 'table',
+          process: (key, data) =>
+            queue.offerAll(Chunk.map(data, (_) => [key, _])),
         },
         signal,
       }),
       pg2
         .query(
           `
-  CREATE TABLE IF NOT EXISTS example
+  CREATE TABLE example
    (id INTEGER PRIMARY KEY, message VARCHAR NOT NULL);
   INSERT INTO example VALUES (1, 'hello'), (2, 'world');
+  UPDATE example SET message = 'goodbye'
+    WHERE id = 1;
+  DELETE FROM example
+    WHERE id = 2;
   DROP TABLE example;`
         )
         .pipe(
           Effect.flatMap(() =>
             Stream.fromQueue(queue).pipe(
-              Stream.flatMap(
-                Schema.parse(
-                  Schema.struct({
-                    newRecord: Schema.struct({
-                      id: Schema.number,
-                      message: Schema.string,
-                    }),
-                  })
-                )
-              ),
-              Stream.takeUntil(
-                ({ newRecord: { message } }) => message === 'world'
-              ),
+              Stream.map(([key, data]) => ({ ...data, key })),
+              Stream.takeUntil((msg) => msg.type === 'Delete'),
               Stream.runCollect
             )
           ),
@@ -87,13 +89,16 @@ const program = Effect.gen(function* (_) {
     )
   );
 
+  const changesArray = Chunk.toReadonlyArray(changes);
+
   yield* _(
-    Effect.forEach(messages, (msg, index) =>
-      Effect.log(`message ${index}: ${inspect(msg.newRecord)}`)
+    Console.table(
+      changesArray,
+      Object.keys(changesArray.find(({ type }) => type === 'Update') ?? [])
     )
   );
 
-  yield* _(pg1.query('DROP PUBLICATION recvlogical_example'));
+  yield* _(pg1.query('DROP PUBLICATION example_publication'));
 });
 
 Effect.runPromise(
