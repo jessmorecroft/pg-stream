@@ -1,6 +1,6 @@
 {
   "name": "@jmorecroft67/pg-stream-core",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "commonjs",
   "repository": {
     "url": "https://github.com/jessmorecroft/pg-stream",
