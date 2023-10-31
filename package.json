@@ -3,13 +3,15 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "test": "nx --no-cloud run-many -t test",
-    "test:watch": "nx --no-cloud run-many -t test --watch",
+    "test": "nx --no-cloud run-many -t test --output-style=stream",
+    "test:core": "npm run test -- -p packages/core",
+    "test:cli": "npm run test -- -p packages/cli",
+    "test:watch": "npm run test --watch",
     "docker:test": "docker compose up test",
     "docker:test:watch": "TEST_WATCH_MODE=1 docker compose up test",
     "build": "nx --no-cloud run-many -t build",
-    "build:cli": "nx --no-cloud run-many -t build -p packages/cli",
-    "build:core": "nx --no-cloud run-many -t build -p packages/core",
+    "build:cli": "npm run build -p packages/cli",
+    "build:core": "npm run build -p packages/core",
     "prepublish": "npm run build",
     "publish": "changeset publish"
   },
@@ -18,18 +20,6 @@
     "packages": [
       "packages/*"
     ]
-  },
-  "dependencies": {
-    "@effect/platform-node": "^0.24.0",
-    "@effect/schema": "^0.44.0",
-    "axios": "^1.0.0",
-    "decimal.js": "^10.4.3",
-    "effect": "^2.0.0-next.49",
-    "fp-ts": "^2.16.1",
-    "io-ts": "^2.2.20",
-    "lodash": "^4.17.21",
-    "parser-ts": "^0.7.0",
-    "tslib": "^2.3.0"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.4.8",
@@ -61,5 +51,9 @@
   },
   "nx": {
     "includedScripts": []
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "tslib": "^2.6.2"
   }
 }

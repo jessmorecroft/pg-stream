@@ -26,6 +26,11 @@ const program = Effect.gen(function* (_) {
   const pg1 = yield* _(pgPool.get());
   const pg2 = yield* _(pgPool.get());
 
+  // Create a publication and a temporary slot for test purposes. In a
+  // production scenario, assuming you wanted to ensure you don't miss
+  // events, you would use a permanent slot and would probably do this
+  // one-time setup independent of your streaming code.
+
   yield* _(pg1.query('CREATE PUBLICATION example_publication FOR ALL TABLES'));
 
   yield* _(
@@ -39,7 +44,13 @@ const program = Effect.gen(function* (_) {
     | DecoratedUpdate
     | DecoratedDelete;
 
-  const queue = yield* _(Queue.unbounded<[string, InsertOrUpdateOrDelete]>());
+  // Bounded queue, which means pushing to this queue will be blocked
+  // by a slow consumer, which in turn means that our consumption of
+  // logs will also be blocked. This is what we want - a slow consumer
+  // should slow our consumption of logs so that the rate we receive
+  // is no more than the rate we're able to consume.
+
+  const queue = yield* _(Queue.bounded<[string, InsertOrUpdateOrDelete]>(16));
 
   const signal = yield* _(Deferred.make<never, void>());
 
@@ -82,6 +93,7 @@ const program = Effect.gen(function* (_) {
               Stream.runCollect
             )
           ),
+          // All done - tell recvlogical to unsubscribe.
           Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined)))
         ),
       {
@@ -99,6 +111,7 @@ const program = Effect.gen(function* (_) {
     ])
   );
 
+  // Cleanup our test publication.
   yield* _(pg1.query('DROP PUBLICATION example_publication'));
 });
 

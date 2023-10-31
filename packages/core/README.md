@@ -52,7 +52,7 @@ query(
 
 // Execute SQL, return results as a stream of parsed results where each element 
 // is a row/ index tuple, such that multiple result sets will be returned in 
-// $sequence with the index resetting to zero when we reach the beginning of the 
+// sequence with the index resetting to zero when we reach the beginning of the 
 // next result set.
 <O extends MakeValueTypeParserOptions>
 queryStreamRaw(
@@ -234,11 +234,13 @@ SELECT * FROM hamster;
 
 ### Logical replication
 
-The logical replication capability of this library, provided by the single `recvlogical` method, is its primary feature, and aims to provide a notification mechanism that might form the basis of a robust Change-Data-Capture (CDC) solution. 
+The logical replication capability of this library, provided by the single `recvlogical` method, is its primary feature. It aims to provide a notification mechanism that might form the basis of a robust Change-Data-Capture (CDC) solution. 
 
 ```typescript
 // You must implement this to process transaction logs.
 export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
+  // Custom partition key, or "serial" - everything in serial, or "table" - 
+  // unique partition key per table.
   key?: ((msg: T) => string) | 'serial' | 'table';
   filter(msg: PgOutputDecoratedMessageTypes): msg is T;
   process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
@@ -301,6 +303,11 @@ const program = Effect.gen(function* (_) {
   const pg1 = yield* _(pgPool.get());
   const pg2 = yield* _(pgPool.get());
 
+  // Create a publication and a temporary slot for test purposes. In a 
+  // production scenario, assuming you wanted to ensure you don't miss 
+  // events, you would use a permanent slot and would probably do this 
+  // one-time setup independent of your streaming code.
+  
   yield* _(pg1.query('CREATE PUBLICATION example_publication FOR ALL TABLES'));
 
   yield* _(
@@ -314,7 +321,13 @@ const program = Effect.gen(function* (_) {
     | DecoratedUpdate
     | DecoratedDelete;
 
-  const queue = yield* _(Queue.unbounded<[string, InsertOrUpdateOrDelete]>());
+  // Bounded queue, which means pushing to this queue will be blocked 
+  // by a slow consumer, which in turn means that our consumption of
+  // logs will also be blocked. This is what we want - a slow consumer
+  // should slow our consumption of logs so that the rate we receive 
+  // is no more than the rate we're able to consume.
+
+  const queue = yield* _(Queue.bounded<[string, InsertOrUpdateOrDelete]>(16));
 
   const signal = yield* _(Deferred.make<never, void>());
 
@@ -357,6 +370,7 @@ const program = Effect.gen(function* (_) {
               Stream.runCollect
             )
           ),
+          // All done - tell recvlogical to unsubscribe.
           Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined)))
         ),
       {
@@ -374,6 +388,7 @@ const program = Effect.gen(function* (_) {
     ])
   );
 
+  // Cleanup our test publication.
   yield* _(pg1.query('DROP PUBLICATION example_publication'));
 });
 
@@ -382,21 +397,21 @@ Effect.runPromise(
 );
 ```
 
-The output of this running against a test postgres docker container with self-signed cert is:
+The output of this running against a test postgres docker container with self-signed certficate is:
 
 ```
-(node:14607) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(node:52727) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
 (Use `node --trace-warnings ...` to show where the warning was created)
-timestamp=2023-10-28T11:20:51.797Z level=INFO fiber=#0 message="CREATE PUBLICATION"
-timestamp=2023-10-28T11:20:51.810Z level=INFO fiber=#0 message=CREATE_REPLICATION_SLOT
-timestamp=2023-10-28T11:20:51.836Z level=INFO fiber=#86 message="CREATE TABLE"
-timestamp=2023-10-28T11:20:51.836Z level=INFO fiber=#86 message="INSERT 0 2"
-timestamp=2023-10-28T11:20:51.836Z level=INFO fiber=#86 message="ALTER TABLE"
-timestamp=2023-10-28T11:20:51.836Z level=INFO fiber=#86 message="UPDATE 1"
-timestamp=2023-10-28T11:20:51.836Z level=INFO fiber=#86 message="DELETE 1"
-timestamp=2023-10-28T11:20:51.836Z level=INFO fiber=#86 message="DROP TABLE"
-timestamp=2023-10-28T11:20:51.873Z level=INFO fiber=#85 message="COPY 0"
-timestamp=2023-10-28T11:20:51.873Z level=INFO fiber=#85 message=START_REPLICATION
+timestamp=2023-10-31T04:39:45.983Z level=INFO fiber=#0 message="CREATE PUBLICATION"
+timestamp=2023-10-31T04:39:45.996Z level=INFO fiber=#0 message=CREATE_REPLICATION_SLOT
+timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="CREATE TABLE"
+timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="INSERT 0 2"
+timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="ALTER TABLE"
+timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="UPDATE 1"
+timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="DELETE 1"
+timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="DROP TABLE"
+timestamp=2023-10-31T04:39:46.055Z level=INFO fiber=#85 message="COPY 0"
+timestamp=2023-10-31T04:39:46.055Z level=INFO fiber=#85 message=START_REPLICATION
 ┌─────────┬──────────┬──────────────────┬─────────────────────────────┬───────────────────────────────┐
 │ (index) │   type   │       key        │          oldRecord          │           newRecord           │
 ├─────────┼──────────┼──────────────────┼─────────────────────────────┼───────────────────────────────┤
@@ -405,7 +420,7 @@ timestamp=2023-10-28T11:20:51.873Z level=INFO fiber=#85 message=START_REPLICATIO
 │    2    │ 'Update' │ 'public.example' │ { id: 1, message: 'hello' } │ { id: 1, message: 'goodbye' } │
 │    3    │ 'Delete' │ 'public.example' │ { id: 2, message: 'world' } │                               │
 └─────────┴──────────┴──────────────────┴─────────────────────────────┴───────────────────────────────┘
-timestamp=2023-10-28T11:20:51.879Z level=INFO fiber=#0 message="DROP PUBLICATION"
+timestamp=2023-10-31T04:39:46.062Z level=INFO fiber=#0 message="DROP PUBLICATION"
 ```
 
 ### earlier versions
@@ -418,6 +433,7 @@ This lib is very much a work in progress, has NOT been widely tested in the fiel
 
 Thankfully there are a number of great, mature alternatives that may do what you're after.
 
+- [postgres](https://www.npmjs.com/package/postgres) - the relatively new kid on the block. This is a fully featured JavaScript library that supports logical replication via its [realtime subscribe](https://www.npmjs.com/package/postgres#realtime-subscribe) feature. This feature provides a simple hook to receive insert, update and delete events, though events are delivered at the rate they are produced with an underlying NodeJS stream in (flowing mode)[https://nodejs.org/api/stream.html#two-reading-modes] (ie. no backpressure) and there is currently no support for persistent (ie. non-temporary) slots.
 - [pg](https://www.npmjs.com/package/pg) - the default choice of client for connecting to Postgres from JavaScript. For logical replication scenarios there is the [pg-copy-streams](https://www.npmjs.com/package/pg-copy-streams) lib built on top of this, which I initially investigated using before naively deciding to do it all myself!
 - [psql](https://www.postgresql.org/docs/current/app-psql.html) - the standard Postgres interactive client. Logical replication using the SQL interface is demonstrated [here](https://www.postgresql.org/docs/current/logicaldecoding-example.html).
 - [pg_recvlogical](https://www.postgresql.org/docs/current/app-pgrecvlogical.html) - a utility for logical replication streaming shipped with Postgres, and inspiration for the `recvlogical` function name! An example of its use with the wal2json plugin is [here](https://access.crunchydata.com/documentation/wal2json/2.0/). (Note to keep things simple the pg-stream-core lib only uses the built-in pgoutput plugin)

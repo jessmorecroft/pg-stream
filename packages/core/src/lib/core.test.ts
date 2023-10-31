@@ -1,28 +1,54 @@
-import { Chunk, Deferred, Effect, Exit, Queue, Stream, identity } from 'effect';
+import {
+  Chunk,
+  Config,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  Queue,
+  Stream,
+  identity,
+} from 'effect';
 import { makePgClient, makePgPool } from './core';
 import { describe, it, expect } from 'vitest';
 import * as Schema from '@effect/schema/Schema';
-import { DecimalFromSelf, walLsnFromString } from './util/schemas';
 import {
+  DecimalFromSelf,
+  walLsnFromString,
   DecoratedBegin,
   DecoratedCommit,
   DecoratedInsert,
   PgOutputDecoratedMessageTypes,
-} from './pg-client/transform-log-data';
+} from './core';
 import _ from 'lodash';
 import Decimal from 'decimal.js';
+
+const PG_OPTIONS = Effect.withConfigProvider(
+  Effect.config(
+    Config.all({
+      host: Config.string('PG_HOST').pipe(Config.withDefault('db')),
+      port: Config.integer('PG_PORT').pipe(Config.withDefault(5432)),
+      useSSL: Config.boolean('PG_USE_SSL').pipe(Config.withDefault(true)),
+      database: Config.string('PG_DATABASE').pipe(
+        Config.withDefault('postgres')
+      ),
+      username: Config.string('PG_USERNAME').pipe(
+        Config.withDefault('postgres')
+      ),
+      password: Config.string('PG_PASSWORD').pipe(
+        Config.withDefault('topsecret')
+      ),
+    })
+  ),
+  ConfigProvider.fromEnv()
+).pipe(Effect.runSync);
 
 describe('core', () => {
   it('should run commands, queries', async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
           min: 1,
           max: 10,
           timeToLive: '2 minutes',
@@ -89,12 +115,7 @@ describe('core', () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
           min: 1,
           max: 10,
           timeToLive: '1 minutes',
@@ -263,12 +284,7 @@ describe('core', () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
           min: 1,
           max: 10,
           timeToLive: '1 minutes',
@@ -370,12 +386,7 @@ describe('core', () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
           min: 1,
           max: 10,
           timeToLive: '1 minutes',
@@ -470,12 +481,7 @@ describe('core', () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
           min: 1,
           max: 10,
           timeToLive: '1 minutes',
@@ -589,12 +595,7 @@ describe('core', () => {
     const program = Effect.gen(function* (_) {
       const pg = yield* _(
         makePgClient({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
         })
       );
 
@@ -631,12 +632,7 @@ describe('core', () => {
     const program = Effect.gen(function* (_) {
       const pg = yield* _(
         makePgClient({
-          host: 'db',
-          port: 5432,
-          useSSL: true,
-          database: 'postgres',
-          username: 'postgres',
-          password: 'topsecret',
+          ...PG_OPTIONS,
         })
       );
 
