@@ -24,16 +24,12 @@ export const queryStreamRaw =
   <O extends MakeValueTypeParserOptions>(
     sql: string,
     parserOptions?: O
-  ): Stream.Stream<
-    never,
-    | ReadableError
-    | WritableError
-    | ParseMessageError
-    | NoMoreMessagesError
-    | PgServerError
-    | PgParseError,
-    [Record<string, ValueType<O>>, number]
-  > => {
+  ): Stream.Stream<[Record<string, ValueType<O>>, number], | ReadableError
+  | WritableError
+  | ParseMessageError
+  | NoMoreMessagesError
+  | PgServerError
+  | PgParseError> => {
     type State = {
       decode?: (row: DataRow) => Record<string, ValueType<O>>;
       offset: number;
@@ -56,14 +52,10 @@ export const queryStreamRaw =
               (
                 state,
                 [msg, index]
-              ): Effect.Effect<
-                never,
-                PgParseError,
-                readonly [
-                  State,
-                  readonly [Record<string, ValueType<O>>, number] | undefined
-                ]
-              > => {
+              ): Effect.Effect<readonly [
+                State,
+                readonly [Record<string, ValueType<O>>, number] | undefined
+              ], PgParseError> => {
                 if (msg.type === 'DataRow') {
                   if (!state.decode) {
                     return Effect.fail(

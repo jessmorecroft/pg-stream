@@ -12,7 +12,7 @@ export class SocketError extends Data.TaggedError('SocketError')<{
   cause: Error;
 }> {}
 
-const onConnect: (socket: net.Socket) => Effect.Effect<never, never, void> = (
+const onConnect: (socket: net.Socket) => Effect.Effect<void> = (
   socket
 ) =>
   listen({
@@ -24,7 +24,7 @@ const onConnect: (socket: net.Socket) => Effect.Effect<never, never, void> = (
 
 export const onError: (
   socket: net.Socket
-) => Effect.Effect<never, SocketError, never> = (socket) =>
+) => Effect.Effect<never, SocketError> = (socket) =>
   listen({
     emitter: socket,
     event: 'error',
@@ -32,7 +32,7 @@ export const onError: (
     get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
   });
 
-const onFinish: (socket: net.Socket) => Effect.Effect<never, never, void> = (
+const onFinish: (socket: net.Socket) => Effect.Effect<void> = (
   socket
 ) =>
   listen({
@@ -45,7 +45,7 @@ const onFinish: (socket: net.Socket) => Effect.Effect<never, never, void> = (
 
 export const onSecureConnect: (
   socket: tls.TLSSocket
-) => Effect.Effect<never, never, void> = (socket) =>
+) => Effect.Effect<void> = (socket) =>
   listen({
     emitter: socket,
     event: 'secureConnect',
@@ -54,7 +54,7 @@ export const onSecureConnect: (
   });
 
 export const end = (socket: net.Socket) =>
-  Effect.async<never, never, void>((cb) => {
+  Effect.async<void>((cb) => {
     if (socket.errored || socket.writableFinished) {
       cb(Effect.unit);
       return;

@@ -28,16 +28,12 @@ export const queryRaw =
   <O extends MakeValueTypeParserOptions>(
     sql: string,
     parserOptions?: O
-  ): Effect.Effect<
-    never,
-    | ReadableError
-    | WritableError
-    | NoMoreMessagesError
-    | ParseMessageError
-    | ParseMessageGroupError
-    | PgServerError,
-    Record<string, ValueType<O>>[][]
-  > =>
+  ): Effect.Effect<Record<string, ValueType<O>>[][], | ReadableError
+  | WritableError
+  | NoMoreMessagesError
+  | ParseMessageError
+  | ParseMessageGroupError
+  | PgServerError> =>
     Effect.gen(function* (_) {
       yield* _(write(socket)({ type: 'Query', sql }));
 

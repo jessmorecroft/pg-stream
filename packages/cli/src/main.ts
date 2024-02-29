@@ -52,7 +52,7 @@ const program = Effect.gen(function* (_) {
 
   const queue = yield* _(Queue.bounded<[string, InsertOrUpdateOrDelete]>(16));
 
-  const signal = yield* _(Deferred.make<never, void>());
+  const signal = yield* _(Deferred.make<void>());
 
   const changes = yield* _(
     Effect.zipRight(

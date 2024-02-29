@@ -12,7 +12,7 @@ import { Duplex } from 'stream';
 import { PgParseError, PgServerError, SchemaTypes } from './util';
 import * as Schema from '@effect/schema/Schema';
 import { queryRaw } from './query-raw';
-import { formatErrors } from '@effect/schema/TreeFormatter';
+import { TreeFormatter } from '@effect/schema';
 
 type NoneOneOrMany<T extends [...any]> = T extends [infer A]
   ? A
@@ -22,21 +22,20 @@ type NoneOneOrMany<T extends [...any]> = T extends [infer A]
 
 export const query =
   (socket: Duplex) =>
-  <S extends [...Schema.Schema<any, any>[]]>(
+  <S extends [...Schema.Schema<any>[]]>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
     ...schemas: S
   ): Effect.Effect<
-    never,
+    NoneOneOrMany<SchemaTypes<S>>,
     | ReadableError
     | WritableError
     | NoMoreMessagesError
     | ParseMessageError
     | ParseMessageGroupError
     | PgServerError
-    | PgParseError,
-    NoneOneOrMany<SchemaTypes<S>>
+    | PgParseError
   > => {
     const { sql, parserOptions } =
       typeof sqlOrOptions === 'string'
@@ -45,11 +44,11 @@ export const query =
 
     return queryRaw(socket)(sql, parserOptions).pipe(
       Effect.flatMap((rows) =>
-        Schema.parse(Schema.tuple(...schemas))(rows).pipe(
+        Schema.decodeUnknown(Schema.tuple(...schemas))(rows).pipe(
           Effect.mapError(
             (pe) =>
               new PgParseError({
-                message: formatErrors(pe.errors),
+                message: TreeFormatter.formatError(pe),
               })
           ),
           Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))

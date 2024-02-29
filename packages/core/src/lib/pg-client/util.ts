@@ -41,7 +41,7 @@ import { SocketError } from '../socket/socket';
 export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
   key?: ((msg: T) => string) | 'serial' | 'table';
   filter(msg: PgOutputDecoratedMessageTypes): msg is T;
-  process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
+  process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<void, E>;
 }
 
 export class PgParseError extends Data.TaggedError('PgParseError')<{
@@ -102,11 +102,7 @@ export const isBackendKeyData = hasTypeOf('BackendKeyData');
 
 export const read: (
   readable: Readable
-) => Effect.Effect<
-  never,
-  Effect.Effect.Error<ReturnType<typeof stream.read>> | PgServerError,
-  MessageTypes
-> = (readable) =>
+) => Effect.Effect<MessageTypes, Effect.Effect.Error<ReturnType<typeof stream.read>> | PgServerError> = (readable) =>
   Effect.filterOrElse(
     stream.read(readable, stream.decode(pgServerMessageParser)),
     (msg): msg is MessageTypes =>
@@ -128,22 +124,14 @@ export const readOrFail =
   (readable: Readable) =>
   <K extends MessageTypes['type']>(
     ...types: [K, ...K[]]
-  ): Effect.Effect<
-    never,
-    Effect.Effect.Error<ReturnType<typeof read>> | UnexpectedMessageError,
-    MessageTypes & { type: K }
-  > =>
+  ): Effect.Effect<MessageTypes & { type: K }, Effect.Effect.Error<ReturnType<typeof read>> | UnexpectedMessageError> =>
     stream.readOrFail(read(readable))(...types);
 
 export const readUntilReady: (
   readable: Readable
 ) => <A>(
   parser: P.Parser<MessageTypes, A>
-) => Effect.Effect<
-  never,
-  Effect.Effect.Error<ReturnType<typeof read>> | ParseMessageGroupError,
-  A
-> = (readable) => (parser) =>
+) => Effect.Effect<A, Effect.Effect.Error<ReturnType<typeof read>> | ParseMessageGroupError> = (readable) => (parser) =>
   stream.readMany(read(readable))(
     parser,
     ({ type }) => type === 'ReadyForQuery'
@@ -153,7 +141,7 @@ export const write: (
   writable: Writable
 ) => (
   message: PgClientMessageTypes
-) => Effect.Effect<never, WritableError, void> = (writable) =>
+) => Effect.Effect<void, WritableError> = (writable) =>
   stream.write(writable, makePgClientMessage);
 
 export const transformRowDescription: <OT extends MakeValueTypeParserOptions>(

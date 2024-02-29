@@ -11,27 +11,26 @@ import {
 import { WritableError } from '../stream/writable';
 import * as Schema from '@effect/schema/Schema';
 import { queryStreamRaw } from './query-stream-raw';
-import { formatErrors } from '@effect/schema/TreeFormatter';
+import { TreeFormatter } from '@effect/schema';
 
 type SchemaTypesUnion<A extends [...Schema.Schema<any>[]]> =
   SchemaTypes<A>[number];
 
 export const queryStream =
   (socket: Duplex) =>
-  <S extends [...Schema.Schema<any, any>[]]>(
+  <S extends [...Schema.Schema<any>[]]>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions?: MakeValueTypeParserOptions },
     ...schemas: S
   ): Stream.Stream<
-    never,
+    readonly [SchemaTypesUnion<S>, number],
     | ReadableError
     | WritableError
     | ParseMessageError
     | NoMoreMessagesError
     | PgServerError
-    | PgParseError,
-    readonly [SchemaTypesUnion<S>, number]
+    | PgParseError
   > => {
     const { sql, parserOptions } =
       typeof sqlOrOptions === 'string'
@@ -39,8 +38,8 @@ export const queryStream =
         : sqlOrOptions;
 
     type State = {
-      left: Schema.Schema<any, any>[];
-      schema?: Schema.Schema<any, any>;
+      left: Schema.Schema<any>[];
+      schema?: Schema.Schema<any>;
     };
     return queryStreamRaw(socket)(sql, parserOptions).pipe(
       Stream.mapAccumEffect(
@@ -49,9 +48,8 @@ export const queryStream =
           s,
           [msg, index]
         ): Effect.Effect<
-          never,
-          PgParseError,
-          readonly [State, readonly [any, number]]
+          readonly [State, readonly [any, number]],
+          PgParseError
         > => {
           const { schema, left } =
             index === 0 ? { schema: s.left[0], left: s.left.slice(1) } : s;
@@ -65,11 +63,11 @@ export const queryStream =
           }
 
           return Effect.map(
-            Schema.parse(schema)(msg).pipe(
+            Schema.decodeUnknown(schema)(msg).pipe(
               Effect.mapError(
                 (pe) =>
                   new PgParseError({
-                    message: formatErrors(pe.errors),
+                    message: TreeFormatter.formatError(pe),
                   })
               ),
               Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))

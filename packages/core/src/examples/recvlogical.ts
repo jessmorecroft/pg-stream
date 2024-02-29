@@ -23,8 +23,8 @@ const program = Effect.gen(function* (_) {
     })
   );
 
-  const pg1 = yield* _(pgPool.get());
-  const pg2 = yield* _(pgPool.get());
+  const pg1 = yield* _(pgPool.get);
+  const pg2 = yield* _(pgPool.get);
 
   //yield* _(pg1.query('CREATE PUBLICATION example_publication FOR ALL TABLES'));
 
@@ -41,7 +41,7 @@ const program = Effect.gen(function* (_) {
 
   const queue = yield* _(Queue.unbounded<[string, InsertOrUpdateOrDelete]>());
 
-  const signal = yield* _(Deferred.make<never, void>());
+  const signal = yield* _(Deferred.make<void>());
 
   const changes = yield* _(
     Effect.zipRight(

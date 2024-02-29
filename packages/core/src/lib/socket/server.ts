@@ -2,15 +2,15 @@ import { Chunk, Data, Effect, Option, Scope, Stream } from 'effect';
 import * as net from 'net';
 import * as tls from 'tls';
 import { listen } from '../util/util';
-import { FileSystem } from '@effect/platform-node/FileSystem';
-import { PlatformError } from '@effect/platform-node/Error';
+import { FileSystem } from '@effect/platform';
+import { Error as PlatformError } from '@effect/platform';
 
 export type Server = ReturnType<typeof make>;
 
 export type StreamSuccess<T> = T extends Stream.Stream<
+  infer A,
   unknown,
-  unknown,
-  infer A
+  unknown
 >
   ? A
   : never;
@@ -29,9 +29,7 @@ export class ServerError extends Data.TaggedError('ServerError')<{
   cause: Error;
 }> {}
 
-const onListening: (server: net.Server) => Effect.Effect<never, never, void> = (
-  server
-) =>
+const onListening: (server: net.Server) => Effect.Effect<void> = (server) =>
   listen({
     emitter: server,
     event: 'listening',
@@ -39,9 +37,7 @@ const onListening: (server: net.Server) => Effect.Effect<never, never, void> = (
     get: (_) => (_.listening ? Option.some<void>(undefined) : Option.none()),
   });
 
-const onClose: (server: net.Server) => Effect.Effect<never, never, void> = (
-  server
-) =>
+const onClose: (server: net.Server) => Effect.Effect<void> = (server) =>
   listen({
     emitter: server,
     event: 'close',
@@ -49,9 +45,9 @@ const onClose: (server: net.Server) => Effect.Effect<never, never, void> = (
     get: () => Option.none(),
   });
 
-const onError: (
-  server: net.Server
-) => Effect.Effect<never, ServerError, never> = (server) =>
+const onError: (server: net.Server) => Effect.Effect<never, ServerError> = (
+  server
+) =>
   listen({
     emitter: server,
     event: 'error',
@@ -60,12 +56,12 @@ const onError: (
   });
 
 const onConnection = (server: net.Server) =>
-  Stream.asyncScoped<Scope.Scope, never, net.Socket>((emit) => {
+  Stream.asyncScoped<net.Socket, never, Scope.Scope>((emit) => {
     const fn = (socket: net.Socket) => emit(Effect.succeed(Chunk.of(socket)));
     server.on('connection', fn);
     return Effect.addFinalizer(() => {
       server.off('connection', fn);
-      return Effect.async<never, never, void>((cb) => {
+      return Effect.async<void>((cb) => {
         server.close((error) => {
           if (error) {
             cb(
@@ -85,8 +81,12 @@ const onConnection = (server: net.Server) =>
 export const tlsConnect = (
   socket: net.Socket,
   { keyFile, certFile }: SSLOptions
-): Effect.Effect<FileSystem, PlatformError, tls.TLSSocket> =>
-  Effect.flatMap(FileSystem, (fs) =>
+): Effect.Effect<
+  tls.TLSSocket,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem
+> =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) =>
     Effect.all({
       key: fs.readFile(keyFile),
       cert: fs.readFile(certFile),

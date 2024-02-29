@@ -310,7 +310,7 @@ describe('core', () => {
       const queue = yield* _(Queue.unbounded<DecoratedInsert>());
 
       const recvlogical = Effect.gen(function* (_) {
-        const stop = yield* _(Deferred.make<never, void>());
+        const stop = yield* _(Deferred.make<void>());
 
         const fibre = Effect.runFork(
           pgPool.get().pipe(
@@ -507,7 +507,7 @@ describe('core', () => {
 
       const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
 
-      const signal = yield* _(Deferred.make<never, void>());
+      const signal = yield* _(Deferred.make<void>());
 
       yield* _(
         Effect.zip(

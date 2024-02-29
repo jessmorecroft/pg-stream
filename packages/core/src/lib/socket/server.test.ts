@@ -48,7 +48,7 @@ it.each<SSLOptions | undefined>([
 
     const client = connect({ host: address.address, port: address.port }).pipe(
       Effect.flatMap(
-        (socket): Effect.Effect<never, SocketError, net.Socket> =>
+        (socket): Effect.Effect<net.Socket, SocketError> =>
           !sslOptions ? Effect.succeed(socket) : clientTlsConnect(socket)
       ),
       Effect.flatMap((socket) => {
