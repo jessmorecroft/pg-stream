@@ -12,7 +12,7 @@ import {
   SocketError,
 } from './socket';
 import * as net from 'net';
-import { layer } from '@effect/platform-node/FileSystem';
+import { NodeFileSystem } from '@effect/platform-node';
 
 const echo = (socket: net.Socket) => {
   return Stream.runDrain(
@@ -79,7 +79,7 @@ it.each<SSLOptions | undefined>([
   });
 
   const result = await Effect.runPromise(
-    program.pipe(Effect.scoped, Effect.provide(layer))
+    program.pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer))
   );
 
   expect(result).toEqual('thequickbrownfoxjumpedoverthelazydog!');

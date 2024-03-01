@@ -6,7 +6,7 @@ import {
   write,
   Options,
 } from './pg-test-server';
-import { layer } from '@effect/platform-node/FileSystem';
+import { NodeFileSystem } from '@effect/platform-node';
 import * as Schema from '@effect/schema/Schema';
 import { PgTypes } from '../pg-protocol';
 import { Socket } from 'net';
@@ -170,7 +170,7 @@ it.each<Options>([
   );
 
   const rows = await Effect.runPromise(
-    program.pipe(Effect.scoped, Effect.provide(layer))
+    program.pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer))
   );
 
   expect(rows).toEqual([

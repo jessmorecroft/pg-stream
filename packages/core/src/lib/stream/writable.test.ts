@@ -1,10 +1,11 @@
 import { push, toSinkable } from './writable';
-import { FileSystem, layer } from '@effect/platform-node/FileSystem';
+import { FileSystem } from '@effect/platform';
+import { NodeFileSystem } from '@effect/platform-node';
 import { Effect, Option, Chunk, Sink, Stream } from 'effect';
 import { createWriteStream } from 'fs';
 
 it('should push "manually"', async () => {
-  const program = FileSystem.pipe(
+  const program = FileSystem.FileSystem.pipe(
     Effect.flatMap((fs) =>
       fs.makeTempFileScoped().pipe(
         Effect.flatMap((filename) =>
@@ -40,13 +41,15 @@ it('should push "manually"', async () => {
     Effect.scoped
   );
 
-  const result = await Effect.runPromise(program.pipe(Effect.provide(layer)));
+  const result = await Effect.runPromise(
+    program.pipe(Effect.provide(NodeFileSystem.layer))
+  );
 
   expect(result).toEqual('helloworld!');
 });
 
 it('should push as sink', async () => {
-  const program = FileSystem.pipe(
+  const program = FileSystem.FileSystem.pipe(
     Effect.flatMap((fs) =>
       fs.makeTempFileScoped().pipe(
         Effect.flatMap((filename) => {
@@ -76,7 +79,9 @@ it('should push as sink', async () => {
     )
   );
 
-  const result = await Effect.runPromise(program.pipe(Effect.provide(layer)));
+  const result = await Effect.runPromise(
+    program.pipe(Effect.provide(NodeFileSystem.layer))
+  );
 
   expect(result).toEqual('howyoudoing?');
 });
