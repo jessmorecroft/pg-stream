@@ -12,25 +12,24 @@ import { Duplex } from 'stream';
 import { PgParseError, PgServerError } from './util';
 import * as Schema from '@effect/schema/Schema';
 import { queryRaw } from './query-raw';
-import { formatErrors } from '@effect/schema/TreeFormatter';
+import { TreeFormatter } from '@effect/schema';
 
 export const queryMany =
   (socket: Duplex) =>
-  <S extends Schema.Schema<any, any>>(
+  <S extends Schema.Schema<any>>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
     schema: S
   ): Effect.Effect<
-    never,
+    readonly Schema.Schema.To<S>[],
     | ReadableError
     | WritableError
     | NoMoreMessagesError
     | ParseMessageError
     | ParseMessageGroupError
     | PgServerError
-    | PgParseError,
-    readonly Schema.Schema.To<S>[]
+    | PgParseError
   > => {
     const { sql, parserOptions } =
       typeof sqlOrOptions === 'string'
@@ -39,11 +38,11 @@ export const queryMany =
 
     return queryRaw(socket)(sql, parserOptions).pipe(
       Effect.flatMap((rows) =>
-        Schema.parse(Schema.array(schema))(rows).pipe(
+        Schema.decodeUnknown(Schema.array(schema))(rows).pipe(
           Effect.mapError(
             (pe) =>
               new PgParseError({
-                message: formatErrors(pe.errors),
+                message: TreeFormatter.formatError(pe),
               })
           ),
           Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))

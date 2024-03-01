@@ -54,7 +54,7 @@ export const hasTypeOf =
   <T extends { type: string }>(msg: T): msg is T & { type: K } =>
     msg.type === type || !!types.find((_) => _ === msg.type);
 
-const onClose: (readable: Readable) => Effect.Effect<never, never, void> = (
+const onClose: (readable: Readable) => Effect.Effect<void> = (
   readable
 ) =>
   listen({
@@ -64,7 +64,7 @@ const onClose: (readable: Readable) => Effect.Effect<never, never, void> = (
     get: (_) => (_.closed ? Option.some<void>(undefined) : Option.none()),
   });
 
-const onReady: (readable: Readable) => Effect.Effect<never, never, void> = (
+const onReady: (readable: Readable) => Effect.Effect<void> = (
   readable
 ) =>
   listen({
@@ -75,7 +75,7 @@ const onReady: (readable: Readable) => Effect.Effect<never, never, void> = (
       _.readableLength > 0 ? Option.some<void>(undefined) : Option.none(),
   });
 
-const onEnd: (readable: Readable) => Effect.Effect<never, never, void> = (
+const onEnd: (readable: Readable) => Effect.Effect<void> = (
   readable
 ) =>
   listen({
@@ -88,7 +88,7 @@ const onEnd: (readable: Readable) => Effect.Effect<never, never, void> = (
 
 const onError: (
   readable: Readable
-) => Effect.Effect<never, ReadableError, never> = (readable) =>
+) => Effect.Effect<never, ReadableError> = (readable) =>
   listen({
     emitter: readable,
     event: 'error',
@@ -96,20 +96,12 @@ const onError: (
     get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
   });
 
-export type Pull<A> = Effect.Effect<never, Option.Option<ReadableError>, A>;
+export type Pull<A> = Effect.Effect<A, Option.Option<ReadableError>>;
 
-export type StreamablePull<A> = Effect.Effect<
-  never,
-  Option.Option<ReadableError>,
-  Chunk.Chunk<A>
->;
+export type StreamablePull<A> = Effect.Effect<Chunk.Chunk<A>, Option.Option<ReadableError>>;
 
 export interface Decode<T> {
-  (buf: Buffer): Effect.Effect<
-    never,
-    ParseMessageError,
-    readonly [T | undefined, Buffer | undefined]
-  >;
+  (buf: Buffer): Effect.Effect<readonly [T | undefined, Buffer | undefined], ParseMessageError>;
 }
 
 export const decode =
@@ -140,7 +132,7 @@ export const pull: {
     options: {
       waitForClose: true;
     }
-  ): Effect.Effect<Scope.Scope, never, Pull<A>>;
+  ): Effect.Effect<Pull<A>, never, Scope.Scope>;
   <A = Buffer>(
     readable: Readable,
     options?: {
@@ -149,11 +141,7 @@ export const pull: {
   ): Pull<A>;
 } = (readable, options): any => {
   const read: Pull<any> = Effect.suspend(() => {
-    const go = (): Effect.Effect<
-      never,
-      Option.Option<ReadableError>,
-      Chunk.Chunk<any>
-    > => {
+    const go = (): Effect.Effect<Chunk.Chunk<any>, Option.Option<ReadableError>> => {
       if (readable.errored) {
         return Effect.fail(
           Option.some(new ReadableError({ cause: readable.errored }))
@@ -200,19 +188,11 @@ export const toStreamable = <A>(pull: Pull<A>): StreamablePull<A> =>
 export const read: <T>(
   readable: Readable,
   decode: Decode<T>
-) => Effect.Effect<
-  never,
-  ReadableError | ParseMessageError | NoMoreMessagesError,
-  T
-> = (readable, decode) => {
+) => Effect.Effect<T, ReadableError | ParseMessageError | NoMoreMessagesError> = (readable, decode) => {
   const readPrepend = <T>(
     decode: Decode<T>,
     prepend?: Buffer
-  ): Effect.Effect<
-    never,
-    ReadableError | ParseMessageError | NoMoreMessagesError,
-    T
-  > =>
+  ): Effect.Effect<T, ReadableError | ParseMessageError | NoMoreMessagesError> =>
     pull(readable).pipe(
       Effect.mapError((e) =>
         Option.isSome(e) ? e.value : new NoMoreMessagesError({})
@@ -237,9 +217,9 @@ export const read: <T>(
 };
 
 export const readStream = <E, T>(
-  read: Effect.Effect<never, E, T>,
+  read: Effect.Effect<T, E>,
   isDone: (e: E) => boolean
-): Stream.Stream<never, E, T> =>
+): Stream.Stream<T, E> =>
   Stream.fromPull(
     Effect.succeed(
       read.pipe(
@@ -250,10 +230,10 @@ export const readStream = <E, T>(
   );
 
 export const readOrFail: <E, T extends { type: string }>(
-  read: Effect.Effect<never, E, T>
+  read: Effect.Effect<T, E>
 ) => <K extends T['type']>(
   ...types: [K, ...K[]]
-) => Effect.Effect<never, E | UnexpectedMessageError, T & { type: K }> =
+) => Effect.Effect<T & { type: K }, E | UnexpectedMessageError> =
   (read) =>
   (...types) =>
     Effect.filterOrFail(
@@ -267,11 +247,11 @@ export const readOrFail: <E, T extends { type: string }>(
     );
 
 export const readMany =
-  <E, T>(read: Effect.Effect<never, E, T>) =>
+  <E, T>(read: Effect.Effect<T, E>) =>
   <A>(
     parser: P.Parser<T, A>,
     isLast: Predicate.Predicate<T>
-  ): Effect.Effect<never, E | ParseMessageGroupError, A> => {
+  ): Effect.Effect<A, E | ParseMessageGroupError> => {
     return Effect.gen(function* (_) {
       const doneRef = yield* _(Ref.make(false));
 
@@ -300,7 +280,7 @@ export const readMany =
           E.fold<
             ParseError<T>,
             ParseSuccess<T, A>,
-            Effect.Effect<never, ParseMessageGroupError, A>
+            Effect.Effect<A, ParseMessageGroupError>
           >(
             (cause) => Effect.fail(new ParseMessageGroupError({ cause })),
             ({ value }) => Effect.succeed(value)

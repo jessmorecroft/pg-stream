@@ -140,11 +140,7 @@ export const transformLogData = (
   logData: XLogData,
   begin?: DecoratedBegin,
   parserOptions?: MakeValueTypeParserOptions
-): Effect.Effect<
-  never,
-  TableInfoNotFoundError | NoTransactionContextError,
-  PgOutputDecoratedMessageTypes
-> => {
+): Effect.Effect<PgOutputDecoratedMessageTypes, TableInfoNotFoundError | NoTransactionContextError> => {
   const xlog = logData.payload;
   switch (xlog.type) {
     case 'Begin': {

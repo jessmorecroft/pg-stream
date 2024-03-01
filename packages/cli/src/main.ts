@@ -23,8 +23,8 @@ const program = Effect.gen(function* (_) {
     })
   );
 
-  const pg1 = yield* _(pgPool.get());
-  const pg2 = yield* _(pgPool.get());
+  const pg1 = yield* _(pgPool.get);
+  const pg2 = yield* _(pgPool.get);
 
   // Create a publication and a temporary slot for test purposes. In a
   // production scenario, assuming you wanted to ensure you don't miss
@@ -52,7 +52,7 @@ const program = Effect.gen(function* (_) {
 
   const queue = yield* _(Queue.bounded<[string, InsertOrUpdateOrDelete]>(16));
 
-  const signal = yield* _(Deferred.make<never, void>());
+  const signal = yield* _(Deferred.make<void>());
 
   const changes = yield* _(
     Effect.zipRight(

@@ -68,21 +68,17 @@ export const recvlogical =
     publicationNames: string[];
     processor: XLogProcessor<E, T>;
     parserOptions?: MakeValueTypeParserOptions;
-    signal?: Deferred.Deferred<never, void>;
-  }): Effect.Effect<
-    never,
-    | ReadableError
-    | WritableError
-    | ParseMessageError
-    | ParseMessageGroupError
-    | NoMoreMessagesError
-    | PgServerError
-    | stream.UnexpectedMessageError
-    | TableInfoNotFoundError
-    | NoTransactionContextError
-    | XLogProcessorError<E>,
-    void
-  > =>
+    signal?: Deferred.Deferred<void>;
+  }): Effect.Effect<void, | ReadableError
+  | WritableError
+  | ParseMessageError
+  | ParseMessageGroupError
+  | NoMoreMessagesError
+  | PgServerError
+  | stream.UnexpectedMessageError
+  | TableInfoNotFoundError
+  | NoTransactionContextError
+  | XLogProcessorError<E>> =>
     Effect.gen(function* (_) {
       yield* _(
         write(socket)({
@@ -159,11 +155,7 @@ export const recvlogical =
           Stream.partitionEither(
             (
               msgAndLog
-            ): Effect.Effect<
-              never,
-              never,
-              Either.Either<[T, XLogData], XLogData>
-            > =>
+            ): Effect.Effect<Either.Either<XLogData, [T, XLogData]>> =>
               processor.filter(msgAndLog[0])
                 ? Effect.succeed(Either.left([msgAndLog[0], msgAndLog[1]]))
                 : Effect.succeed(Either.right(msgAndLog[1]))

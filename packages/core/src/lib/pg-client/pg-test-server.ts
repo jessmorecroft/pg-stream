@@ -10,7 +10,7 @@ import * as stream from '../stream';
 import { Duplex, Readable, Writable } from 'stream';
 import { Socket } from 'net';
 import { end } from '../socket/socket';
-import { FileSystem } from '@effect/platform-node/FileSystem';
+import { FileSystem } from '@effect/platform';
 
 export type Options = Omit<pgClient.Options, 'useSSL' | 'host' | 'port'> & {
   host?: string;
@@ -122,7 +122,7 @@ export const startup = (
 export const make = ({ ssl, host, port, ...options }: Options) => {
   const server = makeServer({ host, port });
 
-  const listen = FileSystem.pipe(
+  const listen = FileSystem.FileSystem.pipe(
     Effect.flatMap((fs) =>
       server.listen.pipe(
         Effect.map(({ sockets, address }) => ({
@@ -158,7 +158,7 @@ export const make = ({ ssl, host, port, ...options }: Options) => {
                 yield* _(Effect.addFinalizer(() => end(sock)));
 
                 return sock;
-              }).pipe(Effect.provideService(FileSystem, fs))
+              }).pipe(Effect.provideService(FileSystem.FileSystem, fs))
             )
           ),
           address,
