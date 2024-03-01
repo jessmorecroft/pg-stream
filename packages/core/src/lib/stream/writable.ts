@@ -11,9 +11,7 @@ export interface Encode<T> {
   (message: T): Buffer;
 }
 
-const onDrain: (writable: Writable) => Effect.Effect<void> = (
-  writable
-) =>
+const onDrain: (writable: Writable) => Effect.Effect<void> = (writable) =>
   listen({
     emitter: writable,
     event: 'drain',
@@ -22,9 +20,9 @@ const onDrain: (writable: Writable) => Effect.Effect<void> = (
       !_.writableNeedDrain ? Option.some<void>(undefined) : Option.none(),
   });
 
-const onError: (
-  writable: Writable
-) => Effect.Effect<never, WritableError> = (writable) =>
+const onError: (writable: Writable) => Effect.Effect<never, WritableError> = (
+  writable
+) =>
   listen({
     emitter: writable,
     event: 'error',
@@ -38,7 +36,10 @@ export type Push<A> = (
 
 export type SinkablePush<A> = (
   input: Option.Option<Chunk.Chunk<A>>
-) => Effect.Effect<void, readonly [Either.Either<void, WritableError>, Chunk.Chunk<never>]>;
+) => Effect.Effect<
+  void,
+  readonly [Either.Either<void, WritableError>, Chunk.Chunk<never>]
+>;
 
 export const push: {
   <A = Buffer>(
@@ -73,9 +74,7 @@ export const push: {
 
       const chunks = Chunk.toReadonlyArray(input.value);
 
-      const go = (
-        _: readonly any[]
-      ): Effect.Effect<void, WritableError> => {
+      const go = (_: readonly any[]): Effect.Effect<void, WritableError> => {
         for (const [index, chunk] of _.entries()) {
           if (writable.writableNeedDrain) {
             return Effect.flatMap(drainOrError, () => go(_.slice(index)));
@@ -129,10 +128,7 @@ export const write: <T>(
   (writable, encode) => (message) =>
     push(writable)(Option.some(Chunk.of(encode(message))));
 
-export const writeSink: <T>(
-  writable: Writable,
-  encode: Encode<T>
-) => Sink.Sink<never, WritableError, T, never, void> = (writable, encode) =>
+export const writeSink = <T>(writable: Writable, encode: Encode<T>) =>
   Sink.fromPush(Effect.succeed(toSinkable(push(writable)))).pipe(
     Sink.mapInput(encode)
   );

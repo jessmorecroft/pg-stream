@@ -22,7 +22,7 @@ type NoneOneOrMany<T extends [...any]> = T extends [infer A]
 
 export const query =
   (socket: Duplex) =>
-  <S extends [...Schema.Schema<any>[]]>(
+  <S extends [...Schema.Schema<any, any, never>[]]>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
@@ -44,7 +44,11 @@ export const query =
 
     return queryRaw(socket)(sql, parserOptions).pipe(
       Effect.flatMap((rows) =>
-        Schema.decodeUnknown(Schema.tuple(...schemas))(rows).pipe(
+        Schema.decodeUnknown(
+          Schema.tuple<ReadonlyArray<Schema.Schema<any, any, never>>>(
+            ...schemas
+          )
+        )(rows).pipe(
           Effect.mapError(
             (pe) =>
               new PgParseError({

@@ -24,22 +24,16 @@ import _ from 'lodash';
 import Decimal from 'decimal.js';
 
 const PG_OPTIONS = Effect.withConfigProvider(
-  Effect.config(
-    Config.all({
-      host: Config.string('PG_HOST').pipe(Config.withDefault('db')),
-      port: Config.integer('PG_PORT').pipe(Config.withDefault(5432)),
-      useSSL: Config.boolean('PG_USE_SSL').pipe(Config.withDefault(true)),
-      database: Config.string('PG_DATABASE').pipe(
-        Config.withDefault('postgres')
-      ),
-      username: Config.string('PG_USERNAME').pipe(
-        Config.withDefault('postgres')
-      ),
-      password: Config.string('PG_PASSWORD').pipe(
-        Config.withDefault('topsecret')
-      ),
-    })
-  ),
+  Config.all({
+    host: Config.string('PG_HOST').pipe(Config.withDefault('db')),
+    port: Config.integer('PG_PORT').pipe(Config.withDefault(5432)),
+    useSSL: Config.boolean('PG_USE_SSL').pipe(Config.withDefault(true)),
+    database: Config.string('PG_DATABASE').pipe(Config.withDefault('postgres')),
+    username: Config.string('PG_USERNAME').pipe(Config.withDefault('postgres')),
+    password: Config.string('PG_PASSWORD').pipe(
+      Config.withDefault('topsecret')
+    ),
+  }),
   ConfigProvider.fromEnv()
 ).pipe(Effect.runSync);
 
@@ -55,7 +49,7 @@ describe('core', () => {
         })
       );
 
-      const pg1 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
 
       yield* _(
         pg1.query(
@@ -123,8 +117,8 @@ describe('core', () => {
         })
       );
 
-      const pg1 = yield* _(pgPool.get());
-      const pg2 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
+      const pg2 = yield* _(pgPool.get);
 
       yield* _(pg1.query('CREATE PUBLICATION test_pub FOR ALL TABLES'));
 
@@ -187,7 +181,7 @@ describe('core', () => {
       yield* _(pg2.query('DROP TABLE test_replication'));
       yield* _(pg2.query('DROP PUBLICATION IF EXISTS test_pub'));
 
-      return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
+      return yield* _(fibre.await.pipe(Effect.flatMap(identity)));
     });
 
     const results = await Effect.runPromise(program.pipe(Effect.scoped));
@@ -292,7 +286,7 @@ describe('core', () => {
         })
       );
 
-      const pg = yield* _(pgPool.get());
+      const pg = yield* _(pgPool.get);
 
       yield* _(pg.query('CREATE PUBLICATION test_pub2 FOR ALL TABLES'));
 
@@ -313,7 +307,7 @@ describe('core', () => {
         const stop = yield* _(Deferred.make<void>());
 
         const fibre = Effect.runFork(
-          pgPool.get().pipe(
+          pgPool.get.pipe(
             Effect.flatMap((streamer) =>
               Effect.race(
                 streamer.recvlogical({
@@ -333,7 +327,7 @@ describe('core', () => {
         );
 
         return Deferred.complete(stop, Effect.unit).pipe(
-          Effect.tap(() => fibre.await())
+          Effect.tap(() => fibre.await)
         );
       });
 
@@ -363,7 +357,7 @@ describe('core', () => {
       yield* _(pg.query('DROP PUBLICATION IF EXISTS test_pub2'));
       yield* _(pg.query('DROP_REPLICATION_SLOT test_slot2'));
 
-      return yield* _(queue.takeAll().pipe(Effect.map(Chunk.toReadonlyArray)));
+      return yield* _(queue.takeAll.pipe(Effect.map(Chunk.toReadonlyArray)));
     });
 
     const results = await Effect.runPromise(program.pipe(Effect.scoped));
@@ -394,8 +388,8 @@ describe('core', () => {
         })
       );
 
-      const pg1 = yield* _(pgPool.get());
-      const pg2 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
+      const pg2 = yield* _(pgPool.get);
 
       yield* _(pg1.query('CREATE PUBLICATION test_pub3 FOR ALL TABLES'));
 
@@ -471,7 +465,7 @@ describe('core', () => {
       yield* _(pg2.query('DROP TABLE test_perf2'));
       yield* _(pg2.query('DROP PUBLICATION IF EXISTS test_pub3'));
 
-      return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
+      return yield* _(fibre.await.pipe(Effect.flatMap(identity)));
     });
 
     await Effect.runPromise(program.pipe(Effect.scoped));
@@ -489,8 +483,8 @@ describe('core', () => {
         })
       );
 
-      const pg1 = yield* _(pgPool.get());
-      const pg2 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
+      const pg2 = yield* _(pgPool.get);
 
       yield* _(pg1.query('CREATE PUBLICATION test_pub4 FOR ALL TABLES'));
 
