@@ -1,6 +1,6 @@
 {
   "name": "@jmorecroft67/pg-stream-core",
-  "version": "2.2.0",
+  "version": "2.3.1",
   "type": "commonjs",
   "repository": {
     "url": "https://github.com/jessmorecroft/pg-stream",
@@ -9,5 +9,18 @@
   "publishConfig": {
     "directory": "../../dist/packages/core"
   },
-  "dependencies": {}
+  "peerDependencies": {
+    "@effect/cli": "^0.35.24",
+    "@effect/platform": "^0.48.22",
+    "@effect/platform-node": "^0.45.24",
+    "@effect/schema": "^0.64.16",
+    "effect": "^2.4.15"
+  },
+  "dependencies": {
+    "decimal.js": "^10.4.3",
+    "fp-ts": "^2.16.5",
+    "io-ts": "^2.2.21",
+    "lodash": "^4.17.21",
+    "parser-ts": "^0.7.0"
+  }
 }

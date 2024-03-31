@@ -1,5 +1,17 @@
 # @jmorecroft67/pg-stream-core
 
+## 2.3.1
+
+### Patch Changes
+
+- fix dependencies
+
+## 2.3.0
+
+### Minor Changes
+
+- update effect to 2.4.15
+
 ## 2.2.0
 
 ### Minor Changes
