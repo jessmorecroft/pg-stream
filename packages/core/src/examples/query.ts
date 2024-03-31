@@ -1,18 +1,18 @@
-import { Schema } from '@effect/schema';
-import { ALL_ENABLED_PARSER_OPTIONS, makePgClient } from '../index';
-import { Effect } from 'effect';
-import { inspect } from 'util';
+import { Schema } from "@effect/schema";
+import { ALL_ENABLED_PARSER_OPTIONS, makePgClient } from "../index";
+import { Effect } from "effect";
+import { inspect } from "util";
 
 const program = Effect.gen(function* (_) {
   const pg = yield* _(
     makePgClient({
-      username: 'postgres',
-      password: 'topsecret',
-      database: 'postgres',
-      host: 'localhost',
+      username: "postgres",
+      password: "topsecret",
+      database: "postgres",
+      host: "localhost",
       port: 5432,
       useSSL: true,
-    })
+    }),
   );
 
   // Let's query something simple, no parsing.
@@ -27,13 +27,13 @@ const program = Effect.gen(function* (_) {
     );
     INSERT INTO dog (name, bark) VALUES ('ralph', 'woof'), ('spot', 'arf');
     SELECT * FROM dog;`,
-      {} // no parsing
-    )
+      {}, // no parsing
+    ),
   );
 
   const logResults = <A>(results: readonly (readonly A[])[]) =>
     Effect.forEach(results, (rows, index) =>
-      Effect.log(`result set ${index}: ${inspect(rows)}`)
+      Effect.log(`result set ${index}: ${inspect(rows)}`),
     );
 
   yield* _(logResults(dogs));
@@ -42,12 +42,12 @@ const program = Effect.gen(function* (_) {
   const dogSchema = Schema.struct({
     id: Schema.number,
     name: Schema.string,
-    bark: Schema.literal('woof', 'arf'),
+    bark: Schema.literal("woof", "arf"),
     created: Schema.DateFromSelf,
   });
 
   const dogs2 = yield* _(
-    pg.query('SELECT * FROM dog', Schema.array(dogSchema))
+    pg.query("SELECT * FROM dog", Schema.array(dogSchema)),
   );
 
   yield* _(logResults([dogs2]));
@@ -56,21 +56,21 @@ const program = Effect.gen(function* (_) {
   const dogSchema2 = Schema.struct({
     id: Schema.number,
     name: Schema.string,
-    bark: Schema.literal('woof', 'arf'),
+    bark: Schema.literal("woof", "arf"),
     created: Schema.string,
   });
 
   const dogs3 = yield* _(
     pg.query(
       {
-        sql: 'SELECT * FROM dog',
+        sql: "SELECT * FROM dog",
         parserOptions: {
           ...ALL_ENABLED_PARSER_OPTIONS,
           parseDates: false,
         },
       },
-      Schema.array(dogSchema2)
-    )
+      Schema.array(dogSchema2),
+    ),
   );
 
   yield* _(logResults([dogs3]));
@@ -83,17 +83,17 @@ const program = Effect.gen(function* (_) {
     created: Schema.DateFromSelf,
   });
 
-  const dogWithKindSchema = Schema.attachPropertySignature(
-    'kind',
-    'dog'
-  )(dogSchema);
-  const catWithKindSchema = Schema.attachPropertySignature(
-    'kind',
-    'cat'
-  )(catSchema);
+  const dogWithKindSchema = dogSchema.pipe(Schema.attachPropertySignature(
+    "kind",
+    "dog",
+  ));
+  const catWithKindSchema = catSchema.pipe(Schema.attachPropertySignature(
+    "kind",
+    "cat",
+  ));
 
-  type DogWithKind = Schema.Schema.To<typeof dogWithKindSchema>;
-  type CatWithKind = Schema.Schema.To<typeof catWithKindSchema>;
+  type DogWithKind = Schema.Schema.Type<typeof dogWithKindSchema>;
+  type CatWithKind = Schema.Schema.Type<typeof catWithKindSchema>;
   const dogsAndCats = yield* _(
     pg.query(
       `
@@ -107,8 +107,8 @@ const program = Effect.gen(function* (_) {
     SELECT * FROM dog;
     SELECT * FROM cat`,
       Schema.nonEmptyArray(dogWithKindSchema),
-      Schema.nonEmptyArray(catWithKindSchema)
-    )
+      Schema.nonEmptyArray(catWithKindSchema),
+    ),
   );
 
   yield* _(logResults<DogWithKind | CatWithKind>(dogsAndCats));
@@ -118,13 +118,13 @@ const program = Effect.gen(function* (_) {
       `
     SELECT * FROM dog;
     SELECT * FROM cat`,
-      Schema.nonEmptyArray(Schema.union(dogWithKindSchema, catWithKindSchema))
-    )
+      Schema.nonEmptyArray(Schema.union(dogWithKindSchema, catWithKindSchema)),
+    ),
   );
 
   yield* _(logResults<DogWithKind | CatWithKind>(dogsAndCats2));
 });
 
 Effect.runPromise(
-  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal)),
 );

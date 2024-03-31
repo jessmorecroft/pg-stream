@@ -9,41 +9,41 @@ import {
   Scope,
   Stream,
   pipe,
-} from 'effect';
-import { Readable } from 'stream';
-import { listen } from '../util/util';
-import { ParseError, ParseSuccess } from 'parser-ts/lib/ParseResult';
-import * as P from 'parser-ts/Parser';
-import * as E from 'fp-ts/Either';
-import * as B from '../parser/buffer';
-import * as S from 'parser-ts/Stream';
+} from "effect";
+import { Readable } from "stream";
+import { listen } from "../util/util";
+import { ParseError, ParseSuccess } from "parser-ts/lib/ParseResult";
+import * as P from "parser-ts/Parser";
+import * as E from "fp-ts/Either";
+import * as B from "../parser/buffer";
+import * as S from "parser-ts/Stream";
 
-export class ReadableError extends Data.TaggedError('ReadableError')<{
+export class ReadableError extends Data.TaggedError("ReadableError")<{
   cause: Error;
 }> {}
 
-export class ParseMessageError extends Data.TaggedError('ParseMessageError')<{
+export class ParseMessageError extends Data.TaggedError("ParseMessageError")<{
   cause: ParseError<number>;
 }> {}
 
 export class ParseMessageGroupError extends Data.TaggedError(
-  'ParseMessageGroupError'
+  "ParseMessageGroupError",
 )<{
   cause: ParseError<unknown>;
 }> {
   override toString() {
     return JSON.stringify(this, (key, value) =>
-      typeof value === 'bigint' ? value.toString() : value
+      typeof value === "bigint" ? value.toString() : value,
     );
   }
 }
 
 export class NoMoreMessagesError extends Data.TaggedError(
-  'NoMoreMessagesError'
+  "NoMoreMessagesError",
 )<Record<string, never>> {}
 
 export class UnexpectedMessageError extends Data.TaggedError(
-  'UnexpectedMessageError'
+  "UnexpectedMessageError",
 )<{
   unexpected: unknown;
   msg?: string;
@@ -54,61 +54,55 @@ export const hasTypeOf =
   <T extends { type: string }>(msg: T): msg is T & { type: K } =>
     msg.type === type || !!types.find((_) => _ === msg.type);
 
-const onClose: (readable: Readable) => Effect.Effect<never, never, void> = (
-  readable
-) =>
+const onClose: (readable: Readable) => Effect.Effect<void> = (readable) =>
   listen({
     emitter: readable,
-    event: 'close',
+    event: "close",
     onEvent: () => Effect.unit,
     get: (_) => (_.closed ? Option.some<void>(undefined) : Option.none()),
   });
 
-const onReady: (readable: Readable) => Effect.Effect<never, never, void> = (
-  readable
-) =>
+const onReady: (readable: Readable) => Effect.Effect<void> = (readable) =>
   listen({
     emitter: readable,
-    event: 'readable',
+    event: "readable",
     onEvent: () => Effect.unit,
     get: (_) =>
       _.readableLength > 0 ? Option.some<void>(undefined) : Option.none(),
   });
 
-const onEnd: (readable: Readable) => Effect.Effect<never, never, void> = (
-  readable
-) =>
+const onEnd: (readable: Readable) => Effect.Effect<void> = (readable) =>
   listen({
     emitter: readable,
-    event: 'end',
+    event: "end",
     onEvent: () => Effect.unit,
     get: (_) =>
       _.readableEnded ? Option.some<void>(undefined) : Option.none(),
   });
 
 const onError: (
-  readable: Readable
+  readable: Readable,
 ) => Effect.Effect<never, ReadableError, never> = (readable) =>
   listen({
     emitter: readable,
-    event: 'error',
+    event: "error",
     onEvent: (cause: Error) => Effect.fail(new ReadableError({ cause })),
     get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
   });
 
-export type Pull<A> = Effect.Effect<never, Option.Option<ReadableError>, A>;
+export type Pull<A> = Effect.Effect<A, Option.Option<ReadableError>>;
 
 export type StreamablePull<A> = Effect.Effect<
-  never,
-  Option.Option<ReadableError>,
-  Chunk.Chunk<A>
+  Chunk.Chunk<A>,
+  Option.Option<ReadableError>
 >;
 
 export interface Decode<T> {
-  (buf: Buffer): Effect.Effect<
-    never,
-    ParseMessageError,
-    readonly [T | undefined, Buffer | undefined]
+  (
+    buf: Buffer,
+  ): Effect.Effect<
+    readonly [T | undefined, Buffer | undefined],
+    ParseMessageError
   >;
 }
 
@@ -129,8 +123,8 @@ export const decode =
           const leftovers =
             cursor < buf.length ? buf.subarray(cursor) : undefined;
           return Effect.succeed([result.value, leftovers]);
-        }
-      )
+        },
+      ),
     );
   };
 
@@ -139,24 +133,23 @@ export const pull: {
     readable: Readable,
     options: {
       waitForClose: true;
-    }
-  ): Effect.Effect<Scope.Scope, never, Pull<A>>;
+    },
+  ): Effect.Effect<Pull<A>, never, Scope.Scope>;
   <A = Buffer>(
     readable: Readable,
     options?: {
       waitForClose: false | undefined;
-    }
+    },
   ): Pull<A>;
 } = (readable, options): any => {
   const read: Pull<any> = Effect.suspend(() => {
     const go = (): Effect.Effect<
-      never,
-      Option.Option<ReadableError>,
-      Chunk.Chunk<any>
+      Chunk.Chunk<any>,
+      Option.Option<ReadableError>
     > => {
       if (readable.errored) {
         return Effect.fail(
-          Option.some(new ReadableError({ cause: readable.errored }))
+          Option.some(new ReadableError({ cause: readable.errored })),
         );
       }
 
@@ -199,23 +192,21 @@ export const toStreamable = <A>(pull: Pull<A>): StreamablePull<A> =>
 
 export const read: <T>(
   readable: Readable,
-  decode: Decode<T>
+  decode: Decode<T>,
 ) => Effect.Effect<
-  never,
-  ReadableError | ParseMessageError | NoMoreMessagesError,
-  T
+  T,
+  ReadableError | ParseMessageError | NoMoreMessagesError
 > = (readable, decode) => {
   const readPrepend = <T>(
     decode: Decode<T>,
-    prepend?: Buffer
+    prepend?: Buffer,
   ): Effect.Effect<
-    never,
-    ReadableError | ParseMessageError | NoMoreMessagesError,
-    T
+    T,
+    ReadableError | ParseMessageError | NoMoreMessagesError
   > =>
     pull(readable).pipe(
       Effect.mapError((e) =>
-        Option.isSome(e) ? e.value : new NoMoreMessagesError({})
+        Option.isSome(e) ? e.value : new NoMoreMessagesError({}),
       ),
       Effect.flatMap((_) => {
         const buf = prepend ? Buffer.concat([prepend, _]) : _;
@@ -228,32 +219,32 @@ export const read: <T>(
               return Effect.succeed(msg);
             }
             return readPrepend(decode, leftovers);
-          })
+          }),
         );
-      })
+      }),
     );
 
   return readPrepend(decode);
 };
 
 export const readStream = <E, T>(
-  read: Effect.Effect<never, E, T>,
-  isDone: (e: E) => boolean
-): Stream.Stream<never, E, T> =>
+  read: Effect.Effect<T, E>,
+  isDone: (e: E) => boolean,
+): Stream.Stream<T, E> =>
   Stream.fromPull(
     Effect.succeed(
       read.pipe(
         Effect.map(Chunk.of),
-        Effect.mapError((e) => (isDone(e) ? Option.none() : Option.some(e)))
-      )
-    )
+        Effect.mapError((e) => (isDone(e) ? Option.none() : Option.some(e))),
+      ),
+    ),
   );
 
 export const readOrFail: <E, T extends { type: string }>(
-  read: Effect.Effect<never, E, T>
-) => <K extends T['type']>(
+  read: Effect.Effect<T, E>,
+) => <K extends T["type"]>(
   ...types: [K, ...K[]]
-) => Effect.Effect<never, E | UnexpectedMessageError, T & { type: K }> =
+) => Effect.Effect<T & { type: K }, E | UnexpectedMessageError> =
   (read) =>
   (...types) =>
     Effect.filterOrFail(
@@ -263,15 +254,15 @@ export const readOrFail: <E, T extends { type: string }>(
         new UnexpectedMessageError({
           unexpected,
           msg: `expected one of ${types}`,
-        })
+        }),
     );
 
 export const readMany =
-  <E, T>(read: Effect.Effect<never, E, T>) =>
+  <E, T>(read: Effect.Effect<T, E>) =>
   <A>(
     parser: P.Parser<T, A>,
-    isLast: Predicate.Predicate<T>
-  ): Effect.Effect<never, E | ParseMessageGroupError, A> => {
+    isLast: Predicate.Predicate<T>,
+  ): Effect.Effect<A, E | ParseMessageGroupError> => {
     return Effect.gen(function* (_) {
       const doneRef = yield* _(Ref.make(false));
 
@@ -286,12 +277,12 @@ export const readMany =
                     Effect.flatMap((msg) =>
                       isLast(msg)
                         ? Effect.as(Ref.set(doneRef, true), msg)
-                        : Effect.succeed(msg)
-                    )
-                  )
-            )
-          )
-        )
+                        : Effect.succeed(msg),
+                    ),
+                  ),
+            ),
+          ),
+        ),
       );
 
       return yield* _(
@@ -300,12 +291,12 @@ export const readMany =
           E.fold<
             ParseError<T>,
             ParseSuccess<T, A>,
-            Effect.Effect<never, ParseMessageGroupError, A>
+            Effect.Effect<A, ParseMessageGroupError>
           >(
             (cause) => Effect.fail(new ParseMessageGroupError({ cause })),
-            ({ value }) => Effect.succeed(value)
-          )
-        )
+            ({ value }) => Effect.succeed(value),
+          ),
+        ),
       );
     });
   };

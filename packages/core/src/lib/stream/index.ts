@@ -15,7 +15,7 @@ import {
   readOrFail,
   readMany,
   readStream,
-} from './readable';
+} from "./readable";
 import {
   WritableError,
   push,
@@ -25,7 +25,7 @@ import {
   Encode,
   SinkablePush,
   Push,
-} from './writable';
+} from "./writable";
 
 export {
   hasTypeOf,

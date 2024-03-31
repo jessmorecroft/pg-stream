@@ -1,6 +1,10 @@
 {
   "[markdown]": {
-    "editor.formatOnSave": false
+    "editor.formatOnSave": true
+  },
+  "[typescript]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "vitest.enable": true,
   "vitest.commandLine": "npx nx --no-cloud run-many -t test --verbose --testFile"

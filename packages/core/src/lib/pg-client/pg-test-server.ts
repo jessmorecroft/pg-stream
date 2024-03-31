@@ -1,24 +1,24 @@
-import * as pgClient from './pg-client';
-import { makeServer, serverTlsConnect, SSLOptions } from '../socket';
+import * as pgClient from "./pg-client";
+import { makeServer, serverTlsConnect, SSLOptions } from "../socket";
 import {
   StartupMessage,
   makePgServerMessage,
   pgClientMessageParser,
-} from '../pg-protocol';
-import { Data, Effect, Stream } from 'effect';
-import * as stream from '../stream';
-import { Duplex, Readable, Writable } from 'stream';
-import { Socket } from 'net';
-import { end } from '../socket/socket';
-import { FileSystem } from '@effect/platform-node/FileSystem';
+} from "../pg-protocol";
+import { Data, Effect, Stream } from "effect";
+import * as stream from "../stream";
+import { Duplex, Readable, Writable } from "stream";
+import { Socket } from "net";
+import { end } from "../socket/socket";
+import { FileSystem } from "@effect/platform/FileSystem";
 
-export type Options = Omit<pgClient.Options, 'useSSL' | 'host' | 'port'> & {
+export type Options = Omit<pgClient.Options, "useSSL" | "host" | "port"> & {
   host?: string;
   port?: number;
   ssl?: SSLOptions;
 };
 
-export class PgTestServerError extends Data.TaggedError('PgTestServerError')<{
+export class PgTestServerError extends Data.TaggedError("PgTestServerError")<{
   msg?: string;
 }> {}
 
@@ -33,90 +33,90 @@ export const write = (socket: Writable) =>
 export const startup = (
   socket: Duplex,
   initial: StartupMessage,
-  options: Omit<Options, 'host' | 'port'>
+  options: Omit<Options, "host" | "port">,
 ) =>
   Effect.gen(function* (_) {
     const { parameters } = initial;
 
     if (
-      parameters.find(({ name }) => name === 'database')?.value !==
+      parameters.find(({ name }) => name === "database")?.value !==
         options.database ||
-      parameters.find(({ name }) => name === 'user')?.value !== options.username
+      parameters.find(({ name }) => name === "user")?.value !== options.username
     ) {
       yield* _(
         write(socket)({
-          type: 'ErrorResponse',
+          type: "ErrorResponse",
           errors: [
             {
-              type: 'V',
-              value: 'FATAL',
+              type: "V",
+              value: "FATAL",
             },
             {
-              type: 'M',
-              value: 'bad parameters',
+              type: "M",
+              value: "bad parameters",
             },
           ],
-        })
+        }),
       );
 
-      yield* _(Effect.fail(new PgTestServerError({ msg: 'bad parameters' })));
+      yield* _(Effect.fail(new PgTestServerError({ msg: "bad parameters" })));
     }
 
-    yield* _(write(socket)({ type: 'AuthenticationCleartextPassword' }));
+    yield* _(write(socket)({ type: "AuthenticationCleartextPassword" }));
 
-    const { password } = yield* _(readOrFail(socket)('PasswordMessage'));
+    const { password } = yield* _(readOrFail(socket)("PasswordMessage"));
 
     if (password === options.password) {
-      yield* _(write(socket)({ type: 'AuthenticationOk' }));
+      yield* _(write(socket)({ type: "AuthenticationOk" }));
     } else {
       yield* _(
         write(socket)({
-          type: 'ErrorResponse',
+          type: "ErrorResponse",
           errors: [
             {
-              type: 'V',
-              value: 'FATAL',
+              type: "V",
+              value: "FATAL",
             },
             {
-              type: 'M',
-              value: 'bad password',
+              type: "M",
+              value: "bad password",
             },
           ],
-        })
+        }),
       );
 
-      yield* _(Effect.fail(new PgTestServerError({ msg: 'bad password' })));
+      yield* _(Effect.fail(new PgTestServerError({ msg: "bad password" })));
     }
 
     yield* _(
       write(socket)({
-        type: 'NoticeResponse',
+        type: "NoticeResponse",
         notices: [
           {
-            type: 'V',
-            value: 'WARNING',
+            type: "V",
+            value: "WARNING",
           },
           {
-            type: 'M',
-            value: 'this is a test server',
+            type: "M",
+            value: "this is a test server",
           },
         ],
-      })
+      }),
     );
 
     for (const { name, value } of parameters) {
-      yield* _(write(socket)({ type: 'ParameterStatus', name, value }));
+      yield* _(write(socket)({ type: "ParameterStatus", name, value }));
     }
 
     yield* _(
       write(socket)({
-        type: 'ParameterStatus',
-        name: 'password',
+        type: "ParameterStatus",
+        name: "password",
         value: password,
-      })
+      }),
     );
 
-    yield* _(write(socket)({ type: 'ReadyForQuery', transactionStatus: 'T' }));
+    yield* _(write(socket)({ type: "ReadyForQuery", transactionStatus: "T" }));
   });
 
 export const make = ({ ssl, host, port, ...options }: Options) => {
@@ -132,23 +132,23 @@ export const make = ({ ssl, host, port, ...options }: Options) => {
                 let sock: Socket = socket;
 
                 const msg = yield* _(
-                  readOrFail(sock)('StartupMessage', 'SSLRequest')
+                  readOrFail(sock)("StartupMessage", "SSLRequest"),
                 );
 
-                if (msg.type === 'SSLRequest') {
+                if (msg.type === "SSLRequest") {
                   yield* _(
-                    write(sock)({ type: 'SSLRequestResponse', useSSL: !!ssl })
+                    write(sock)({ type: "SSLRequestResponse", useSSL: !!ssl }),
                   );
 
                   if (ssl) {
                     sock = yield* _(serverTlsConnect(sock, ssl));
 
-                    const msg2 = yield* _(readOrFail(sock)('StartupMessage'));
+                    const msg2 = yield* _(readOrFail(sock)("StartupMessage"));
 
                     yield* _(startup(sock, msg2, options));
                   } else {
                     return yield* _(
-                      Effect.fail(new Error('SSL requested but not supported'))
+                      Effect.fail(new Error("SSL requested but not supported")),
                     );
                   }
                 } else {
@@ -158,13 +158,13 @@ export const make = ({ ssl, host, port, ...options }: Options) => {
                 yield* _(Effect.addFinalizer(() => end(sock)));
 
                 return sock;
-              }).pipe(Effect.provideService(FileSystem, fs))
-            )
+              }).pipe(Effect.provideService(FileSystem, fs)),
+            ),
           ),
           address,
-        }))
-      )
-    )
+        })),
+      ),
+    ),
   );
 
   return { listen };

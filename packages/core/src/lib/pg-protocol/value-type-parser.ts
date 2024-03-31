@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import * as E from 'fp-ts/Either';
-import * as S from 'parser-ts/string';
-import * as C from 'parser-ts/char';
-import * as P from 'parser-ts/Parser';
-import { pipe } from 'fp-ts/lib/function';
-import Decimal from 'decimal.js';
+import * as E from "fp-ts/Either";
+import * as S from "parser-ts/string";
+import * as C from "parser-ts/char";
+import * as P from "parser-ts/Parser";
+import { pipe } from "fp-ts/lib/function";
+import Decimal from "decimal.js";
 
 /**
  * These types were obtained using the following query, which evolved from the one used by the brianc/node-pg-types lib:
@@ -99,28 +99,29 @@ export type MakeValueTypeParserOptions = {
 
 export type NestedArray<A> = (A | NestedArray<A>)[];
 
-export type IfFlag<O, F extends string, T> = Required<O> extends {
-  [K in F]: boolean;
-}
-  ? O extends { [K in F]: false }
-    ? never // flag is false
-    : T // flag is true or boolean or an optional boolean
-  : never; // no flag in options type
+export type IfFlag<O, F extends string, T> =
+  Required<O> extends {
+    [K in F]: boolean;
+  }
+    ? O extends { [K in F]: false }
+      ? never // flag is false
+      : T // flag is true or boolean or an optional boolean
+    : never; // no flag in options type
 
 export type BaseValueType<O> =
-  | IfFlag<O, 'parseBooleans', boolean>
-  | IfFlag<O, 'parseBigInts', bigint>
-  | IfFlag<O, 'parseDates', Date>
-  | IfFlag<O, 'parseFloats', number>
-  | IfFlag<O, 'parseInts', number>
-  | IfFlag<O, 'parseNumerics', Decimal>
-  | IfFlag<O, 'parseJson', object>
+  | IfFlag<O, "parseBooleans", boolean>
+  | IfFlag<O, "parseBigInts", bigint>
+  | IfFlag<O, "parseDates", Date>
+  | IfFlag<O, "parseFloats", number>
+  | IfFlag<O, "parseInts", number>
+  | IfFlag<O, "parseNumerics", Decimal>
+  | IfFlag<O, "parseJson", object>
   | string
   | null;
 
 export type ValueType<O = MakeValueTypeParserOptions> =
   | BaseValueType<O>
-  | IfFlag<O, 'parseArrays', NestedArray<BaseValueType<O>>>;
+  | IfFlag<O, "parseArrays", NestedArray<BaseValueType<O>>>;
 
 export const ALL_ENABLED_PARSER_OPTIONS: MakeValueTypeParserOptions = {
   parseBooleans: true,
@@ -144,25 +145,25 @@ export const NONE_ENABLED_PARSER_OPTIONS = {};
 
 export const makeValueTypeParser = <O extends MakeValueTypeParserOptions>(
   oid: number,
-  options?: O
+  options?: O,
 ): P.Parser<string, ValueType<O>> => {
   const opt = options ?? (DEFAULT_PARSER_OPTIONS as O);
 
   const elementTypeOid = ArrayTypeMap.get(oid);
   if (elementTypeOid && opt.parseArrays) {
     return makeArrayValueTypeParser(
-      makeBaseValueTypeParser(elementTypeOid, opt)
+      makeBaseValueTypeParser(elementTypeOid, opt),
     ) as P.Parser<string, ValueType<O>>;
   }
   return pipe(
     makeBaseValueTypeParser(oid, opt),
-    P.chainFirst(() => P.eof())
+    P.chainFirst(() => P.eof()),
   ) as P.Parser<string, ValueType<O>>;
 };
 
 export const getTypeName = (
-  oid: number
-): `${PgTypeName}` | `${PgTypeName}[]` | 'unknown' => {
+  oid: number,
+): `${PgTypeName}` | `${PgTypeName}[]` | "unknown" => {
   const typeName = BaseTypeMap.get(oid);
   if (typeName) {
     return typeName;
@@ -174,70 +175,70 @@ export const getTypeName = (
       return `${elementTypeName}[]`;
     }
   }
-  return 'unknown';
+  return "unknown";
 };
 
 const BaseTypeMap = new Map<number, PgTypeName>(
   Array.from(Object.entries(PgTypes)).map(
-    ([name, { baseTypeOid }]) => [baseTypeOid, name as PgTypeName] as const
-  )
+    ([name, { baseTypeOid }]) => [baseTypeOid, name as PgTypeName] as const,
+  ),
 );
 
 const ArrayTypeMap = new Map<number, number>(
   Array.from(Object.entries(PgTypes)).map(
-    ([, { baseTypeOid, arrayTypeOid }]) => [arrayTypeOid, baseTypeOid]
-  )
+    ([, { baseTypeOid, arrayTypeOid }]) => [arrayTypeOid, baseTypeOid],
+  ),
 );
 
 const makeBaseValueTypeParser: <O extends MakeValueTypeParserOptions>(
   oid: number,
-  options: O
+  options: O,
 ) => P.Parser<string, BaseValueType<O>> = (oid, options) => {
   const baseType = BaseTypeMap.get(oid);
 
   switch (baseType) {
-    case 'int2':
-    case 'int4': {
+    case "int2":
+    case "int4": {
       if (options.parseInts) {
         return S.int;
       }
       return anyParser;
     }
-    case 'int8': {
+    case "int8": {
       if (options.parseBigInts) {
         return bigIntParser;
       }
       return anyParser;
     }
-    case 'numeric': {
+    case "numeric": {
       if (options.parseNumerics) {
         return decimalParser;
       }
       return anyParser;
     }
-    case 'bool': {
+    case "bool": {
       if (options.parseBooleans) {
         return boolParser;
       }
       return anyParser;
     }
-    case 'float4':
-    case 'float8': {
+    case "float4":
+    case "float8": {
       if (options.parseFloats) {
         return S.float;
       }
       return anyParser;
     }
-    case 'json':
-    case 'jsonb': {
+    case "json":
+    case "jsonb": {
       if (options.parseJson) {
         return jsonParser;
       }
       return anyParser;
     }
-    case 'date':
-    case 'timestamp':
-    case 'timestamptz': {
+    case "date":
+    case "timestamp":
+    case "timestamptz": {
       if (options.parseDates) {
         return dateParser;
       }
@@ -256,27 +257,27 @@ const dateParser = pipe(
   P.chain((s) => {
     const dt = new Date(s);
     return isNaN(dt.getTime()) ? P.fail() : P.succeed(dt);
-  })
+  }),
 );
 
 const decimalParser = P.expected(
   pipe(
     S.fold([
-      S.maybe(C.oneOf('+-')),
+      S.maybe(C.oneOf("+-")),
       C.many1(C.digit),
-      S.maybe(S.fold([C.char('.'), C.many1(C.digit)])),
+      S.maybe(S.fold([C.char("."), C.many1(C.digit)])),
     ]),
-    P.map((s) => new Decimal(s))
+    P.map((s) => new Decimal(s)),
   ),
-  'a decimal'
+  "a decimal",
 );
 
 const bigIntParser = P.expected(
   pipe(
-    S.fold([S.maybe(C.char('-')), C.many1(C.digit)]),
-    P.map((s) => BigInt(s))
+    S.fold([S.maybe(C.char("-")), C.many1(C.digit)]),
+    P.map((s) => BigInt(s)),
   ),
-  'an integer'
+  "an integer",
 );
 
 const jsonParser = pipe(
@@ -287,26 +288,26 @@ const jsonParser = pipe(
       E.tryCatch(
         () => JSON.parse(s),
         (error) =>
-          error instanceof Error ? `JSON, but got: ${error.message}` : 'JSON'
+          error instanceof Error ? `JSON, but got: ${error.message}` : "JSON",
       ),
       E.fold(
         (expected) => P.expected(P.fail(), expected),
-        (json) => P.succeed(json)
-      )
-    )
-  )
+        (json) => P.succeed(json),
+      ),
+    ),
+  ),
 );
 
 const boolParser = P.expected(
   pipe(
-    P.sat<string>((c) => c === 't' || c === 'f'),
-    P.map((c) => c === 't')
+    P.sat<string>((c) => c === "t" || c === "f"),
+    P.map((c) => c === "t"),
   ),
-  'true (t) or false (f)'
+  "true (t) or false (f)",
 );
 
 const makeArrayValueTypeParser = <A>(
-  elementParser: P.Parser<string, A>
+  elementParser: P.Parser<string, A>,
 ): P.Parser<string, NestedArray<A>> => {
   const innerParser = P.either(
     pipe(
@@ -316,32 +317,32 @@ const makeArrayValueTypeParser = <A>(
           S.run(quoted.replaceAll('\\"', '"'))(
             pipe(
               elementParser,
-              P.chainFirst(() => P.eof())
-            )
+              P.chainFirst(() => P.eof()),
+            ),
           ),
           E.fold(
             () => P.fail(),
-            ({ value }) => P.succeed(value)
-          )
-        )
-      )
+            ({ value }) => P.succeed(value),
+          ),
+        ),
+      ),
     ),
     () =>
       pipe(
-        P.lookAhead(C.notChar('{')), // don't want the catch-all parser matching a subarray
-        P.chain(() => elementParser)
-      )
+        P.lookAhead(C.notChar("{")), // don't want the catch-all parser matching a subarray
+        P.chain(() => elementParser),
+      ),
   );
 
   return P.between(
-    C.char('{'),
-    C.char('}')
+    C.char("{"),
+    C.char("}"),
   )(
     P.sepBy(
-      C.char(','),
+      C.char(","),
       P.either<string, A | NestedArray<A>>(innerParser, () =>
-        makeArrayValueTypeParser(innerParser)
-      )
-    )
+        makeArrayValueTypeParser(innerParser),
+      ),
+    ),
   );
 };

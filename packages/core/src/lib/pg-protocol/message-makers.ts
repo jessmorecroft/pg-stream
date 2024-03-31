@@ -1,4 +1,4 @@
-import assert from 'assert';
+import assert from "assert";
 import {
   Query,
   RowDescription,
@@ -24,15 +24,15 @@ import {
   AuthenticationSASLFinal,
   AuthenticationMD5Password,
   SSLRequestResponse,
-} from './message-parsers';
-import { makePgOutputMessage } from './pgoutput';
+} from "./message-parsers";
+import { makePgOutputMessage } from "./pgoutput";
 
-type NoTag<T> = Omit<T, 'type'>;
+type NoTag<T> = Omit<T, "type">;
 
 export const makePgQuery = ({ sql }: NoTag<Query>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + sql.length + 1);
 
-  let offset = buf.write('Q');
+  let offset = buf.write("Q");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(sql, offset);
   offset = buf.writeInt8(0, offset);
@@ -47,7 +47,7 @@ export const makePgCommandComplete = ({
 }: NoTag<CommandComplete>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + commandTag.length + 1);
 
-  let offset = buf.write('C');
+  let offset = buf.write("C");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(commandTag, offset);
   offset = buf.writeInt8(0, offset);
@@ -60,7 +60,7 @@ export const makePgCommandComplete = ({
 export const makePgCopyDone = () => {
   const buf = Buffer.allocUnsafe(1 + 4);
 
-  let offset = buf.write('c');
+  let offset = buf.write("c");
   offset = buf.writeInt32BE(4, offset);
 
   assert(offset === buf.length, `offset ${offset} != length ${buf.length}`);
@@ -71,7 +71,7 @@ export const makePgCopyDone = () => {
 export const makePgCopyFail = ({ error }: NoTag<CopyFail>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + error.length + 1);
 
-  let offset = buf.write('f');
+  let offset = buf.write("f");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(error, offset);
   offset = buf.writeInt8(0, offset);
@@ -88,11 +88,11 @@ export const makePgRowDescription = ({ fields }: NoTag<RowDescription>) => {
       2 +
       fields.reduce(
         (acc, field) => acc + field.name.length + 1 + 4 + 2 + 4 + 2 + 4 + 2,
-        0
-      )
+        0,
+      ),
   );
 
-  let offset = buf.write('T');
+  let offset = buf.write("T");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset = buf.writeInt16BE(fields.length, offset);
 
@@ -115,7 +115,7 @@ export const makePgRowDescription = ({ fields }: NoTag<RowDescription>) => {
 export const makePgAuthenticateOk = () => {
   const buf = Buffer.allocUnsafe(1 + 4 + 4);
 
-  let offset = buf.write('R');
+  let offset = buf.write("R");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset = buf.writeInt32BE(0, offset);
 
@@ -127,7 +127,7 @@ export const makePgAuthenticateOk = () => {
 export const makePgAuthenticateCleartextPassword = () => {
   const buf = Buffer.allocUnsafe(1 + 4 + 4);
 
-  let offset = buf.write('R');
+  let offset = buf.write("R");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset = buf.writeInt32BE(3, offset);
 
@@ -142,7 +142,7 @@ export const makePgBackendKeyData = ({
 }: NoTag<BackendKeyData>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + 4 + 4);
 
-  let offset = buf.write('K');
+  let offset = buf.write("K");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset = buf.writeInt32BE(pid, offset);
   offset = buf.writeInt32BE(secretKey, offset);
@@ -158,7 +158,7 @@ export const makePgParameterStatus = ({
 }: NoTag<ParameterStatus>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + name.length + 1 + value.length + 1);
 
-  let offset = buf.write('S');
+  let offset = buf.write("S");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(name, offset);
   offset = buf.writeInt8(0, offset);
@@ -175,14 +175,14 @@ export const makePgErrorResponse = ({ errors }: NoTag<ErrorResponse>) => {
     1 +
       4 +
       errors.reduce((acc, error) => acc + 1 + error.value.length + 1, 0) +
-      1
+      1,
   );
 
-  let offset = buf.write('E');
+  let offset = buf.write("E");
   offset = buf.writeInt32BE(buf.length - 1, offset);
 
   errors.forEach(({ type, value }) => {
-    offset += buf.write(type.length === 1 ? type : '?', offset);
+    offset += buf.write(type.length === 1 ? type : "?", offset);
     offset += buf.write(value, offset);
     offset = buf.writeInt8(0, offset);
   });
@@ -198,14 +198,14 @@ export const makePgNoticeResponse = ({ notices }: NoTag<NoticeResponse>) => {
     1 +
       4 +
       notices.reduce((acc, notice) => acc + 1 + notice.value.length + 1, 0) +
-      1
+      1,
   );
 
-  let offset = buf.write('N');
+  let offset = buf.write("N");
   offset = buf.writeInt32BE(buf.length - 1, offset);
 
   notices.forEach(({ type, value }) => {
-    offset += buf.write(type.length === 1 ? type : '?', offset);
+    offset += buf.write(type.length === 1 ? type : "?", offset);
     offset += buf.write(value, offset);
     offset = buf.writeInt8(0, offset);
   });
@@ -218,16 +218,19 @@ export const makePgNoticeResponse = ({ notices }: NoTag<NoticeResponse>) => {
 
 export const makePgDataRow = ({ values }: NoTag<DataRow>) => {
   const buf = Buffer.allocUnsafe(
-    1 + 4 + 2 + values.reduce((acc, value) => acc + 4 + (value?.length ?? 0), 0)
+    1 +
+      4 +
+      2 +
+      values.reduce((acc, value) => acc + 4 + (value?.length ?? 0), 0),
   );
 
-  let offset = buf.write('D');
+  let offset = buf.write("D");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset = buf.writeInt16BE(values.length, offset);
 
   values.forEach((value) => {
     offset = buf.writeInt32BE(value?.length ?? -1, offset);
-    offset += buf.write(value ?? '', offset);
+    offset += buf.write(value ?? "", offset);
   });
 
   assert(offset === buf.length, `offset ${offset} != length ${buf.length}`);
@@ -240,7 +243,7 @@ export const makePgReadyForQuery = ({
 }: NoTag<ReadyForQuery>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + 1);
 
-  let offset = buf.write('Z');
+  let offset = buf.write("Z");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(transactionStatus, offset);
 
@@ -255,7 +258,7 @@ export const makePgCopyBothResponse = ({
 }: NoTag<CopyBothResponse>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + 1 + 2 + columnBinary.length);
 
-  let offset = buf.write('W');
+  let offset = buf.write("W");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset = buf.writeInt8(binary ? 1 : 0, offset);
   offset = buf.writeInt16BE(columnBinary.length, offset);
@@ -273,40 +276,40 @@ export const makePgCopyData = (copyData: NoTag<CopyData>) => {
   const { payload } = copyData;
   let buf2: Buffer;
   switch (payload.type) {
-    case 'XLogData': {
+    case "XLogData": {
       const { walStart, walEnd, timeStamp, payload: innerPayload } = payload;
 
       const headerBuf = Buffer.allocUnsafe(1 + 8 + 8 + 8);
-      let offset = headerBuf.write('w');
+      let offset = headerBuf.write("w");
       offset = headerBuf.writeBigInt64BE(walStart, offset);
       offset = headerBuf.writeBigInt64BE(walEnd, offset);
       offset = headerBuf.writeBigInt64BE(timeStamp, offset);
       assert(
         offset === headerBuf.length,
-        `offset ${offset} != length ${headerBuf.length}`
+        `offset ${offset} != length ${headerBuf.length}`,
       );
       const payloadBuf = makePgOutputMessage(innerPayload);
       buf2 = Buffer.concat([headerBuf, payloadBuf]);
       break;
     }
-    case 'XKeepAlive': {
+    case "XKeepAlive": {
       const { walEnd, timeStamp, replyNow } = payload;
       buf2 = Buffer.allocUnsafe(1 + 8 + 8 + 1);
-      let offset = buf2.write('k');
+      let offset = buf2.write("k");
       offset = buf2.writeBigInt64BE(walEnd, offset);
       offset = buf2.writeBigInt64BE(timeStamp, offset);
       offset = buf2.writeInt8(replyNow ? 1 : 0, offset);
       assert(
         offset === buf2.length,
-        `offset ${offset} != length ${buf2.length}`
+        `offset ${offset} != length ${buf2.length}`,
       );
       break;
     }
-    case 'XStatusUpdate': {
+    case "XStatusUpdate": {
       const { lastWalWrite, lastWalFlush, lastWalApply, timeStamp, replyNow } =
         payload;
       buf2 = Buffer.allocUnsafe(1 + 8 + 8 + 8 + 8 + 1);
-      let offset = buf2.write('r');
+      let offset = buf2.write("r");
       offset = buf2.writeBigInt64BE(lastWalWrite, offset);
       offset = buf2.writeBigInt64BE(lastWalFlush, offset);
       offset = buf2.writeBigInt64BE(lastWalApply, offset);
@@ -314,7 +317,7 @@ export const makePgCopyData = (copyData: NoTag<CopyData>) => {
       offset = buf2.writeInt8(replyNow ? 1 : 0, offset);
       assert(
         offset === buf2.length,
-        `offset ${offset} != length ${buf2.length}`
+        `offset ${offset} != length ${buf2.length}`,
       );
       break;
     }
@@ -322,7 +325,7 @@ export const makePgCopyData = (copyData: NoTag<CopyData>) => {
 
   const buf1 = Buffer.allocUnsafe(1 + 4);
 
-  const offset = buf1.write('d');
+  const offset = buf1.write("d");
   buf1.writeInt32BE(buf1.length + buf2.length - 1, offset);
 
   return Buffer.concat([buf1, buf2]);
@@ -337,9 +340,9 @@ export const makePgStartupMessage = ({
       4 +
       parameters.reduce(
         (acc, { name, value }) => acc + name.length + 1 + value.length + 1,
-        0
+        0,
       ) +
-      1
+      1,
   );
 
   let offset = buf.writeInt32BE(buf.length);
@@ -362,7 +365,7 @@ export const makePgStartupMessage = ({
 export const makePgPasswordMessage = ({ password }: NoTag<PasswordMessage>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + password.length + 1);
 
-  let offset = buf.write('p');
+  let offset = buf.write("p");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(password, offset);
   offset = buf.writeInt8(0, offset);
@@ -377,10 +380,10 @@ export const makePgSaslInitialResponse = ({
   mechanism,
 }: NoTag<SASLInitialResponse>) => {
   const buf = Buffer.allocUnsafe(
-    1 + 4 + mechanism.length + 1 + 4 + clientFirstMessage.length
+    1 + 4 + mechanism.length + 1 + 4 + clientFirstMessage.length,
   );
 
-  let offset = buf.write('p');
+  let offset = buf.write("p");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(mechanism, offset);
   offset = buf.writeInt8(0, offset);
@@ -397,7 +400,7 @@ export const makePgSaslResponse = ({
 }: NoTag<SASLResponse>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + clientFinalMessage.length);
 
-  let offset = buf.write('p');
+  let offset = buf.write("p");
   offset = buf.writeInt32BE(buf.length - 1, offset);
   offset += buf.write(clientFinalMessage, offset);
 
@@ -423,9 +426,9 @@ export const makePgSSLRequestResponse = ({
   const buf = Buffer.allocUnsafe(1);
 
   if (useSSL) {
-    buf.write('S');
+    buf.write("S");
   } else {
-    buf.write('N');
+    buf.write("N");
   }
 
   return buf;
@@ -433,21 +436,21 @@ export const makePgSSLRequestResponse = ({
 
 export const makePgClientMessage = (message: PgClientMessageTypes): Buffer => {
   switch (message.type) {
-    case 'SSLRequest':
+    case "SSLRequest":
       return makePgSSLRequest(message);
-    case 'StartupMessage':
+    case "StartupMessage":
       return makePgStartupMessage(message);
-    case 'Query':
+    case "Query":
       return makePgQuery(message);
-    case 'PasswordMessage':
+    case "PasswordMessage":
       return makePgPasswordMessage(message);
-    case 'CopyData':
+    case "CopyData":
       return makePgCopyData(message);
-    case 'CopyDone':
+    case "CopyDone":
       return makePgCopyDone();
-    case 'SASLInitialResponse':
+    case "SASLInitialResponse":
       return makePgSaslInitialResponse(message);
-    case 'SASLResponse':
+    case "SASLResponse":
       return makePgSaslResponse(message);
   }
 };
@@ -461,38 +464,38 @@ export type PgTestServerMessageTypes = Exclude<
 >;
 
 export const makePgServerMessage = (
-  message: PgTestServerMessageTypes
+  message: PgTestServerMessageTypes,
 ): Buffer => {
   switch (message.type) {
-    case 'ReadyForQuery':
+    case "ReadyForQuery":
       return makePgReadyForQuery(message);
-    case 'AuthenticationCleartextPassword':
+    case "AuthenticationCleartextPassword":
       return makePgAuthenticateCleartextPassword();
-    case 'AuthenticationOk':
+    case "AuthenticationOk":
       return makePgAuthenticateOk();
-    case 'BackendKeyData':
+    case "BackendKeyData":
       return makePgBackendKeyData(message);
-    case 'CopyBothResponse':
+    case "CopyBothResponse":
       return makePgCopyBothResponse(message);
-    case 'CopyData':
+    case "CopyData":
       return makePgCopyData(message);
-    case 'DataRow':
+    case "DataRow":
       return makePgDataRow(message);
-    case 'ErrorResponse':
+    case "ErrorResponse":
       return makePgErrorResponse(message);
-    case 'NoticeResponse':
+    case "NoticeResponse":
       return makePgNoticeResponse(message);
-    case 'RowDescription':
+    case "RowDescription":
       return makePgRowDescription(message);
-    case 'ParameterStatus':
+    case "ParameterStatus":
       return makePgParameterStatus(message);
-    case 'CommandComplete':
+    case "CommandComplete":
       return makePgCommandComplete(message);
-    case 'CopyDone':
+    case "CopyDone":
       return makePgCopyDone();
-    case 'CopyFail':
+    case "CopyFail":
       return makePgCopyFail(message);
-    case 'SSLRequestResponse':
+    case "SSLRequestResponse":
       return makePgSSLRequestResponse(message);
   }
 };

@@ -8,10 +8,10 @@ import {
   Queue,
   Stream,
   identity,
-} from 'effect';
-import { makePgClient, makePgPool } from './core';
-import { describe, it, expect } from 'vitest';
-import * as Schema from '@effect/schema/Schema';
+} from "effect";
+import { makePgClient, makePgPool } from "./core";
+import { describe, it, expect } from "vitest";
+import * as Schema from "@effect/schema/Schema";
 import {
   DecimalFromSelf,
   walLsnFromString,
@@ -19,91 +19,85 @@ import {
   DecoratedCommit,
   DecoratedInsert,
   PgOutputDecoratedMessageTypes,
-} from './core';
-import _ from 'lodash';
-import Decimal from 'decimal.js';
+} from "./core";
+import _ from "lodash";
+import Decimal from "decimal.js";
 
 const PG_OPTIONS = Effect.withConfigProvider(
-  Effect.config(
-    Config.all({
-      host: Config.string('PG_HOST').pipe(Config.withDefault('db')),
-      port: Config.integer('PG_PORT').pipe(Config.withDefault(5432)),
-      useSSL: Config.boolean('PG_USE_SSL').pipe(Config.withDefault(true)),
-      database: Config.string('PG_DATABASE').pipe(
-        Config.withDefault('postgres')
-      ),
-      username: Config.string('PG_USERNAME').pipe(
-        Config.withDefault('postgres')
-      ),
-      password: Config.string('PG_PASSWORD').pipe(
-        Config.withDefault('topsecret')
-      ),
-    })
-  ),
-  ConfigProvider.fromEnv()
+  Config.all({
+    host: Config.string("PG_HOST").pipe(Config.withDefault("db")),
+    port: Config.integer("PG_PORT").pipe(Config.withDefault(5432)),
+    useSSL: Config.boolean("PG_USE_SSL").pipe(Config.withDefault(true)),
+    database: Config.string("PG_DATABASE").pipe(Config.withDefault("postgres")),
+    username: Config.string("PG_USERNAME").pipe(Config.withDefault("postgres")),
+    password: Config.string("PG_PASSWORD").pipe(
+      Config.withDefault("topsecret"),
+    ),
+  }),
+  ConfigProvider.fromEnv(),
 ).pipe(Effect.runSync);
 
-describe('core', () => {
-  it('should run commands, queries', async () => {
+describe("core", () => {
+  it("should run commands, queries", async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
           ...PG_OPTIONS,
           min: 1,
           max: 10,
-          timeToLive: '2 minutes',
-        })
+          timeToLive: "2 minutes",
+        }),
       );
 
-      const pg1 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
 
       yield* _(
         pg1.query(
-          'CREATE TABLE IF NOT EXISTS test_query ( id SERIAL, hello VARCHAR, world NUMERIC )'
-        )
+          "CREATE TABLE IF NOT EXISTS test_query ( id SERIAL, hello VARCHAR, world NUMERIC )",
+        ),
       );
 
       yield* _(
         pg1.query(`INSERT INTO test_query ( hello, world ) VALUES ('cya', 10.00);
                        INSERT INTO test_query ( hello, world ) VALUES ('goodbye', -1.00);
-                       INSERT INTO test_query ( hello, world ) VALUES ('adios', 88.88)`)
+                       INSERT INTO test_query ( hello, world ) VALUES ('adios', 88.88)`),
       );
 
       const parsed = yield* _(
         pg1.query(
-          'SELECT * FROM test_query',
+          "SELECT * FROM test_query",
           Schema.nonEmptyArray(
             Schema.struct({
               id: Schema.number,
               hello: Schema.string,
               world: DecimalFromSelf,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       );
 
-      const raw = yield* _(pg1.queryRaw('SELECT * FROM test_query'));
+      const raw = yield* _(pg1.queryRaw("SELECT * FROM test_query"));
 
-      yield* _(pg1.query('DROP TABLE test_query'));
+      yield* _(pg1.query("DROP TABLE test_query"));
 
       return { parsed, raw };
     });
 
     const { parsed, raw } = await Effect.runPromise(
-      program.pipe(Effect.scoped)
+      program.pipe(Effect.scoped),
     );
 
     const expected = expect.arrayContaining([
       expect.objectContaining({
-        hello: 'cya',
+        hello: "cya",
         world: new Decimal(10),
       }),
       expect.objectContaining({
-        hello: 'goodbye',
+        hello: "goodbye",
         world: new Decimal(-1),
       }),
       expect.objectContaining({
-        hello: 'adios',
+        hello: "adios",
         world: new Decimal(88.88),
       }),
     ]);
@@ -111,32 +105,32 @@ describe('core', () => {
     expect(raw).toEqual([expected]);
   });
 
-  it('should stream replication', async () => {
+  it("should stream replication", async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
           ...PG_OPTIONS,
           min: 1,
           max: 10,
-          timeToLive: '1 minutes',
+          timeToLive: "1 minutes",
           replication: true,
-        })
+        }),
       );
 
-      const pg1 = yield* _(pgPool.get());
-      const pg2 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
+      const pg2 = yield* _(pgPool.get);
 
-      yield* _(pg1.query('CREATE PUBLICATION test_pub FOR ALL TABLES'));
+      yield* _(pg1.query("CREATE PUBLICATION test_pub FOR ALL TABLES"));
 
       yield* _(
         pg1.query(
-          'CREATE_REPLICATION_SLOT test_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          "CREATE_REPLICATION_SLOT test_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT",
           Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       );
 
       const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
@@ -144,26 +138,26 @@ describe('core', () => {
       const fibre = Effect.runFork(
         Effect.race(
           Stream.fromQueue(queue).pipe(
-            Stream.takeUntil(({ type }) => type === 'Delete'),
+            Stream.takeUntil(({ type }) => type === "Delete"),
             Stream.runCollect,
-            Effect.map(Chunk.toReadonlyArray)
+            Effect.map(Chunk.toReadonlyArray),
           ),
           pg1
             .recvlogical({
-              slotName: 'test_slot',
-              publicationNames: ['test_pub'],
+              slotName: "test_slot",
+              publicationNames: ["test_pub"],
               processor: {
                 filter: (
-                  msg: PgOutputDecoratedMessageTypes
+                  msg: PgOutputDecoratedMessageTypes,
                 ): msg is Exclude<
                   PgOutputDecoratedMessageTypes,
                   DecoratedBegin | DecoratedCommit
-                > => msg.type !== 'Begin' && msg.type !== 'Commit',
+                > => msg.type !== "Begin" && msg.type !== "Commit",
                 process: (_, data) => queue.offerAll(data),
               },
             })
-            .pipe(Effect.flatMap(() => Effect.never))
-        )
+            .pipe(Effect.flatMap(() => Effect.never)),
+        ),
       );
 
       yield* _(
@@ -172,58 +166,58 @@ describe('core', () => {
                      word VARCHAR NOT NULL,
                      flag BOOLEAN,
                      matrix INT[][],
-                     blob JSON)`)
+                     blob JSON)`),
       );
-      yield* _(pg2.query('ALTER TABLE test_replication REPLICA IDENTITY FULL'));
+      yield* _(pg2.query("ALTER TABLE test_replication REPLICA IDENTITY FULL"));
       yield* _(
         pg2.query(`INSERT INTO test_replication VALUES
                  (1, 'hello', null, null, '{"meaning":[42]}'),
-                 (2, 'gday', true, array[array[1,2,3], array[4,5,6]], null)`)
+                 (2, 'gday', true, array[array[1,2,3], array[4,5,6]], null)`),
       );
       yield* _(
-        pg2.query("UPDATE test_replication SET word = 'hiya' WHERE id = 1")
+        pg2.query("UPDATE test_replication SET word = 'hiya' WHERE id = 1"),
       );
-      yield* _(pg2.query('DELETE FROM test_replication WHERE id = 1'));
-      yield* _(pg2.query('DROP TABLE test_replication'));
-      yield* _(pg2.query('DROP PUBLICATION IF EXISTS test_pub'));
+      yield* _(pg2.query("DELETE FROM test_replication WHERE id = 1"));
+      yield* _(pg2.query("DROP TABLE test_replication"));
+      yield* _(pg2.query("DROP PUBLICATION IF EXISTS test_pub"));
 
-      return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
+      return yield* _(fibre.await.pipe(Effect.flatMap(identity)));
     });
 
     const results = await Effect.runPromise(program.pipe(Effect.scoped));
 
     expect(results).toEqual([
       expect.objectContaining({
-        type: 'Relation',
-        name: 'test_replication',
-        namespace: 'public',
+        type: "Relation",
+        name: "test_replication",
+        namespace: "public",
         columns: [
-          expect.objectContaining({ name: 'id', dataTypeName: 'int4' }),
+          expect.objectContaining({ name: "id", dataTypeName: "int4" }),
           expect.objectContaining({
-            name: 'word',
-            dataTypeName: 'varchar',
+            name: "word",
+            dataTypeName: "varchar",
           }),
           expect.objectContaining({
-            name: 'flag',
-            dataTypeName: 'bool',
+            name: "flag",
+            dataTypeName: "bool",
           }),
           expect.objectContaining({
-            name: 'matrix',
-            dataTypeName: 'int4[]',
+            name: "matrix",
+            dataTypeName: "int4[]",
           }),
           expect.objectContaining({
-            name: 'blob',
-            dataTypeName: 'json',
+            name: "blob",
+            dataTypeName: "json",
           }),
         ],
       }),
       expect.objectContaining({
-        type: 'Insert',
-        namespace: 'public',
-        name: 'test_replication',
+        type: "Insert",
+        namespace: "public",
+        name: "test_replication",
         newRecord: {
           id: 1,
-          word: 'hello',
+          word: "hello",
           flag: null,
           matrix: null,
           blob: {
@@ -232,12 +226,12 @@ describe('core', () => {
         },
       }),
       expect.objectContaining({
-        type: 'Insert',
-        namespace: 'public',
-        name: 'test_replication',
+        type: "Insert",
+        namespace: "public",
+        name: "test_replication",
         newRecord: {
           id: 2,
-          word: 'gday',
+          word: "gday",
           flag: true,
           matrix: [
             [1, 2, 3],
@@ -247,31 +241,31 @@ describe('core', () => {
         },
       }),
       expect.objectContaining({
-        type: 'Update',
-        namespace: 'public',
-        name: 'test_replication',
+        type: "Update",
+        namespace: "public",
+        name: "test_replication",
         newRecord: {
           id: 1,
-          word: 'hiya',
+          word: "hiya",
           flag: null,
           matrix: null,
           blob: { meaning: [42] },
         },
         oldRecord: {
           id: 1,
-          word: 'hello',
+          word: "hello",
           flag: null,
           matrix: null,
           blob: { meaning: [42] },
         },
       }),
       expect.objectContaining({
-        namespace: 'public',
-        name: 'test_replication',
-        type: 'Delete',
+        namespace: "public",
+        name: "test_replication",
+        type: "Delete",
         oldRecord: {
           id: 1,
-          word: 'hiya',
+          word: "hiya",
           flag: null,
           matrix: null,
           blob: { meaning: [42] },
@@ -280,134 +274,136 @@ describe('core', () => {
     ]);
   });
 
-  it('should persist replication state between restarts', async () => {
+  it("should persist replication state between restarts", async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
           ...PG_OPTIONS,
           min: 1,
           max: 10,
-          timeToLive: '1 minutes',
+          timeToLive: "1 minutes",
           replication: true,
-        })
+        }),
       );
 
-      const pg = yield* _(pgPool.get());
+      const pg = yield* _(pgPool.get);
 
-      yield* _(pg.query('CREATE PUBLICATION test_pub2 FOR ALL TABLES'));
+      yield* _(pg.query("CREATE PUBLICATION test_pub2 FOR ALL TABLES"));
 
       yield* _(
         pg.query(
-          'CREATE_REPLICATION_SLOT test_slot2 LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          "CREATE_REPLICATION_SLOT test_slot2 LOGICAL pgoutput NOEXPORT_SNAPSHOT",
           Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       );
 
       const queue = yield* _(Queue.unbounded<DecoratedInsert>());
 
       const recvlogical = Effect.gen(function* (_) {
-        const stop = yield* _(Deferred.make<never, void>());
+        const stop = yield* _(Deferred.make<void>());
 
         const fibre = Effect.runFork(
-          pgPool.get().pipe(
+          pgPool.get.pipe(
             Effect.flatMap((streamer) =>
               Effect.race(
                 streamer.recvlogical({
-                  slotName: 'test_slot2',
-                  publicationNames: ['test_pub2'],
+                  slotName: "test_slot2",
+                  publicationNames: ["test_pub2"],
                   processor: {
                     filter: (msg): msg is DecoratedInsert =>
-                      msg.type === 'Insert',
+                      msg.type === "Insert",
                     process: (_, data) => queue.offerAll(data),
                   },
                 }),
-                Deferred.await(stop)
-              ).pipe(Effect.tap(() => pgPool.invalidate(streamer)))
+                Deferred.await(stop),
+              ).pipe(Effect.tap(() => pgPool.invalidate(streamer))),
             ),
-            Effect.scoped
-          )
+            Effect.scoped,
+          ),
         );
 
         return Deferred.complete(stop, Effect.unit).pipe(
-          Effect.tap(() => fibre.await())
+          Effect.tap(() => fibre.await),
         );
       });
 
       yield* _(
-        pg.query('CREATE TABLE IF NOT EXISTS test_recovery ( numbers INTEGER )')
+        pg.query(
+          "CREATE TABLE IF NOT EXISTS test_recovery ( numbers INTEGER )",
+        ),
       );
 
-      yield* _(pg.query('INSERT INTO test_recovery VALUES (1)'));
-      yield* _(pg.query('INSERT INTO test_recovery VALUES (2)'));
-      yield* _(pg.query('INSERT INTO test_recovery VALUES (3)'));
+      yield* _(pg.query("INSERT INTO test_recovery VALUES (1)"));
+      yield* _(pg.query("INSERT INTO test_recovery VALUES (2)"));
+      yield* _(pg.query("INSERT INTO test_recovery VALUES (3)"));
 
-      yield* _(Effect.flatMap(recvlogical, Effect.delay('1 seconds')));
+      yield* _(Effect.flatMap(recvlogical, Effect.delay("1 seconds")));
 
       yield* _(
         pg.query(`INSERT INTO test_recovery VALUES (4);
                   INSERT INTO test_recovery VALUES (5);
-                  INSERT INTO test_recovery VALUES (6)`)
+                  INSERT INTO test_recovery VALUES (6)`),
       );
 
-      yield* _(Effect.flatMap(recvlogical, Effect.delay('1 seconds')));
+      yield* _(Effect.flatMap(recvlogical, Effect.delay("1 seconds")));
 
-      yield* _(pg.query('INSERT INTO test_recovery VALUES (7),(8),(9)'));
+      yield* _(pg.query("INSERT INTO test_recovery VALUES (7),(8),(9)"));
 
-      yield* _(Effect.flatMap(recvlogical, Effect.delay('1 seconds')));
+      yield* _(Effect.flatMap(recvlogical, Effect.delay("1 seconds")));
 
-      yield* _(pg.query('DROP TABLE test_recovery'));
-      yield* _(pg.query('DROP PUBLICATION IF EXISTS test_pub2'));
-      yield* _(pg.query('DROP_REPLICATION_SLOT test_slot2'));
+      yield* _(pg.query("DROP TABLE test_recovery"));
+      yield* _(pg.query("DROP PUBLICATION IF EXISTS test_pub2"));
+      yield* _(pg.query("DROP_REPLICATION_SLOT test_slot2"));
 
-      return yield* _(queue.takeAll().pipe(Effect.map(Chunk.toReadonlyArray)));
+      return yield* _(queue.takeAll.pipe(Effect.map(Chunk.toReadonlyArray)));
     });
 
     const results = await Effect.runPromise(program.pipe(Effect.scoped));
 
-    expect(results.filter(({ type }) => type === 'Insert')).toEqual(
+    expect(results.filter(({ type }) => type === "Insert")).toEqual(
       _.times(9, (num) =>
         expect.objectContaining({
-          name: 'test_recovery',
-          namespace: 'public',
+          name: "test_recovery",
+          namespace: "public",
           newRecord: {
             numbers: num + 1,
           },
-          type: 'Insert',
-        })
-      )
+          type: "Insert",
+        }),
+      ),
     );
   });
 
-  it.each<number>([1500])('should stream changes quickly', async (rowCount) => {
+  it.each<number>([1500])("should stream changes quickly", async (rowCount) => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
           ...PG_OPTIONS,
           min: 1,
           max: 10,
-          timeToLive: '1 minutes',
+          timeToLive: "1 minutes",
           replication: true,
-        })
+        }),
       );
 
-      const pg1 = yield* _(pgPool.get());
-      const pg2 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
+      const pg2 = yield* _(pgPool.get);
 
-      yield* _(pg1.query('CREATE PUBLICATION test_pub3 FOR ALL TABLES'));
+      yield* _(pg1.query("CREATE PUBLICATION test_pub3 FOR ALL TABLES"));
 
       yield* _(
         pg1.query(
-          'CREATE_REPLICATION_SLOT test_slot3 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          "CREATE_REPLICATION_SLOT test_slot3 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT",
           Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       );
 
       const queue = yield* _(Queue.bounded<DecoratedInsert>(10));
@@ -421,106 +417,106 @@ describe('core', () => {
                 const last = prev[msg.name];
                 if (
                   last !== undefined &&
-                  msg.newRecord['id'] === last + 1 &&
-                  msg.newRecord['word'] === 'word'
+                  msg.newRecord["id"] === last + 1 &&
+                  msg.newRecord["word"] === "word"
                 ) {
                   return Effect.succeed({ ...prev, [msg.name]: last + 1 });
                 }
-                return Effect.fail(new Error('unexpected ' + msg));
-              }
+                return Effect.fail(new Error("unexpected " + msg));
+              },
             ),
             Stream.takeUntil(
               (counts) =>
-                counts['test_perf1'] === rowCount &&
-                counts['test_perf2'] === rowCount
+                counts["test_perf1"] === rowCount &&
+                counts["test_perf2"] === rowCount,
             ),
-            Stream.runLast
+            Stream.runLast,
           ),
           pg1
             .recvlogical({
-              slotName: 'test_slot3',
-              publicationNames: ['test_pub3'],
+              slotName: "test_slot3",
+              publicationNames: ["test_pub3"],
               processor: {
-                filter: (msg): msg is DecoratedInsert => msg.type === 'Insert',
+                filter: (msg): msg is DecoratedInsert => msg.type === "Insert",
                 process: (_, data) => queue.offerAll(data),
-                key: () => '',
+                key: () => "",
               },
             })
-            .pipe(Effect.flatMap(() => Effect.never))
-        )
+            .pipe(Effect.flatMap(() => Effect.never)),
+        ),
       );
 
       yield* _(
-        pg2.query('CREATE TABLE test_perf1 (id INT PRIMARY KEY, word VARCHAR)')
+        pg2.query("CREATE TABLE test_perf1 (id INT PRIMARY KEY, word VARCHAR)"),
       );
       yield* _(
-        pg2.query('CREATE TABLE test_perf2 (id INT PRIMARY KEY, word VARCHAR)')
+        pg2.query("CREATE TABLE test_perf2 (id INT PRIMARY KEY, word VARCHAR)"),
       );
       yield* _(
         pg2.query(
-          `INSERT INTO test_perf1 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`
-        )
+          `INSERT INTO test_perf1 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`,
+        ),
       );
       yield* _(
         pg2.query(
-          `INSERT INTO test_perf2 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`
-        )
+          `INSERT INTO test_perf2 SELECT g.*, 'word' FROM generate_series(1, ${rowCount}, 1) AS g(series)`,
+        ),
       );
 
-      yield* _(pg2.query('DROP TABLE test_perf1'));
-      yield* _(pg2.query('DROP TABLE test_perf2'));
-      yield* _(pg2.query('DROP PUBLICATION IF EXISTS test_pub3'));
+      yield* _(pg2.query("DROP TABLE test_perf1"));
+      yield* _(pg2.query("DROP TABLE test_perf2"));
+      yield* _(pg2.query("DROP PUBLICATION IF EXISTS test_pub3"));
 
-      return yield* _(fibre.await().pipe(Effect.flatMap(identity)));
+      return yield* _(fibre.await.pipe(Effect.flatMap(identity)));
     });
 
     await Effect.runPromise(program.pipe(Effect.scoped));
   });
 
-  it('should stream replication and exit gracefully', async () => {
+  it("should stream replication and exit gracefully", async () => {
     const program = Effect.gen(function* (_) {
       const pgPool = yield* _(
         makePgPool({
           ...PG_OPTIONS,
           min: 1,
           max: 10,
-          timeToLive: '1 minutes',
+          timeToLive: "1 minutes",
           replication: true,
-        })
+        }),
       );
 
-      const pg1 = yield* _(pgPool.get());
-      const pg2 = yield* _(pgPool.get());
+      const pg1 = yield* _(pgPool.get);
+      const pg2 = yield* _(pgPool.get);
 
-      yield* _(pg1.query('CREATE PUBLICATION test_pub4 FOR ALL TABLES'));
+      yield* _(pg1.query("CREATE PUBLICATION test_pub4 FOR ALL TABLES"));
 
       yield* _(
         pg1.query(
-          'CREATE_REPLICATION_SLOT test_slot4 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
+          "CREATE_REPLICATION_SLOT test_slot4 TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT",
           Schema.tuple(
             Schema.struct({
               consistent_point: walLsnFromString,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       );
 
       const queue = yield* _(Queue.unbounded<PgOutputDecoratedMessageTypes>());
 
-      const signal = yield* _(Deferred.make<never, void>());
+      const signal = yield* _(Deferred.make<void>());
 
       yield* _(
         Effect.zip(
           pg1.recvlogical({
-            slotName: 'test_slot4',
-            publicationNames: ['test_pub4'],
+            slotName: "test_slot4",
+            publicationNames: ["test_pub4"],
             processor: {
               filter: (
-                msg: PgOutputDecoratedMessageTypes
+                msg: PgOutputDecoratedMessageTypes,
               ): msg is Exclude<
                 PgOutputDecoratedMessageTypes,
                 DecoratedBegin | DecoratedCommit
-              > => msg.type !== 'Begin' && msg.type !== 'Commit',
+              > => msg.type !== "Begin" && msg.type !== "Commit",
               process: (_, data) => queue.offerAll(data),
             },
             signal,
@@ -531,27 +527,27 @@ describe('core', () => {
         CREATE TABLE IF NOT EXISTS test_graceful
          (id INTEGER PRIMARY KEY, word VARCHAR NOT NULL);
         INSERT INTO test_graceful VALUES (1, 'hello'), (2, 'world');
-        DROP TABLE test_graceful;`
+        DROP TABLE test_graceful;`,
             )
             .pipe(
               Effect.flatMap(() =>
                 Effect.delay(
                   Deferred.done(signal, Exit.succeed(undefined)),
-                  '1 seconds'
-                )
-              )
+                  "1 seconds",
+                ),
+              ),
             ),
           {
             concurrent: true,
-          }
-        )
+          },
+        ),
       );
 
       // the original connection should still work
-      yield* _(pg1.query('DROP PUBLICATION IF EXISTS test_pub4'));
+      yield* _(pg1.query("DROP PUBLICATION IF EXISTS test_pub4"));
 
       return yield* _(
-        Queue.takeAll(queue).pipe(Effect.map(Chunk.toReadonlyArray))
+        Queue.takeAll(queue).pipe(Effect.map(Chunk.toReadonlyArray)),
       );
     });
 
@@ -559,44 +555,44 @@ describe('core', () => {
 
     expect(results).toEqual([
       expect.objectContaining({
-        type: 'Relation',
-        name: 'test_graceful',
-        namespace: 'public',
+        type: "Relation",
+        name: "test_graceful",
+        namespace: "public",
         columns: [
-          expect.objectContaining({ name: 'id', dataTypeName: 'int4' }),
+          expect.objectContaining({ name: "id", dataTypeName: "int4" }),
           expect.objectContaining({
-            name: 'word',
-            dataTypeName: 'varchar',
+            name: "word",
+            dataTypeName: "varchar",
           }),
         ],
       }),
       expect.objectContaining({
-        type: 'Insert',
-        namespace: 'public',
-        name: 'test_graceful',
+        type: "Insert",
+        namespace: "public",
+        name: "test_graceful",
         newRecord: {
           id: 1,
-          word: 'hello',
+          word: "hello",
         },
       }),
       expect.objectContaining({
-        type: 'Insert',
-        namespace: 'public',
-        name: 'test_graceful',
+        type: "Insert",
+        namespace: "public",
+        name: "test_graceful",
         newRecord: {
           id: 2,
-          word: 'world',
+          word: "world",
         },
       }),
     ]);
   });
 
-  it('should stream query', async () => {
+  it("should stream query", async () => {
     const program = Effect.gen(function* (_) {
       const pg = yield* _(
         makePgClient({
           ...PG_OPTIONS,
-        })
+        }),
       );
 
       const stream = pg.queryStreamRaw(
@@ -606,7 +602,7 @@ describe('core', () => {
            SELECT *, null as category from test_query_stream where id > 500 order by id;
            DROP TABLE test_query_stream;
           `,
-        {}
+        {},
       );
 
       return yield* _(
@@ -614,12 +610,12 @@ describe('core', () => {
           Stream.zipWithIndex,
           Stream.filter(
             ([[row], index]) =>
-              row['id'] === `${index + 1}` &&
-              row['word'] === 'word' &&
-              row['category'] === (index < 500 ? 'lower' : null)
+              row["id"] === `${index + 1}` &&
+              row["word"] === "word" &&
+              row["category"] === (index < 500 ? "lower" : null),
           ),
-          Stream.runCount
-        )
+          Stream.runCount,
+        ),
       );
     });
 
@@ -628,12 +624,12 @@ describe('core', () => {
     expect(count).toEqual(1000);
   });
 
-  it('should stream query and parse', async () => {
+  it("should stream query and parse", async () => {
     const program = Effect.gen(function* (_) {
       const pg = yield* _(
         makePgClient({
           ...PG_OPTIONS,
-        })
+        }),
       );
 
       const schema = Schema.struct({
@@ -651,7 +647,7 @@ describe('core', () => {
           `,
         },
         schema,
-        schema
+        schema,
       );
 
       return yield* _(
@@ -660,11 +656,11 @@ describe('core', () => {
           Stream.filter(
             ([[row], index]) =>
               row.id === index + 1 &&
-              row.word === 'word' &&
-              row.category === (index < 500 ? 'lower' : null)
+              row.word === "word" &&
+              row.category === (index < 500 ? "lower" : null),
           ),
-          Stream.runCount
-        )
+          Stream.runCount,
+        ),
       );
     });
 

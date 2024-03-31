@@ -1,5 +1,5 @@
-import { Effect, Option } from 'effect';
-import { EventEmitter } from 'stream';
+import { Effect, Option } from "effect";
+import { EventEmitter } from "stream";
 
 export const listen = <T extends EventEmitter, A, E, B>({
   emitter,
@@ -9,10 +9,10 @@ export const listen = <T extends EventEmitter, A, E, B>({
 }: {
   emitter: T;
   event: string;
-  onEvent: (_: A) => Effect.Effect<never, E, B>;
+  onEvent: (_: A) => Effect.Effect<B, E>;
   get: (emitter: T) => Option.Option<A>;
 }) =>
-  Effect.async<never, E, B>((cb, signal) => {
+  Effect.async<B, E>((cb, signal) => {
     const fn = (_: A) => cb(onEvent(_));
     const _ = get(emitter);
     if (Option.isSome(_)) {

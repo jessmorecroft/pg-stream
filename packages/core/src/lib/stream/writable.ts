@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Chunk, Data, Effect, Either, Option, Scope, Sink } from 'effect';
-import { Writable } from 'stream';
-import { listen } from '../util/util';
+import { Chunk, Data, Effect, Either, Option, Scope, Sink } from "effect";
+import { Writable } from "stream";
+import { listen } from "../util/util";
 
-export class WritableError extends Data.TaggedError('WritableError')<{
+export class WritableError extends Data.TaggedError("WritableError")<{
   cause: Error;
 }> {}
 
@@ -11,37 +11,36 @@ export interface Encode<T> {
   (message: T): Buffer;
 }
 
-const onDrain: (writable: Writable) => Effect.Effect<never, never, void> = (
-  writable
+const onDrain: (writable: Writable) => Effect.Effect<void, never> = (
+  writable,
 ) =>
   listen({
     emitter: writable,
-    event: 'drain',
+    event: "drain",
     onEvent: () => Effect.unit,
     get: (_) =>
       !_.writableNeedDrain ? Option.some<void>(undefined) : Option.none(),
   });
 
 const onError: (
-  writable: Writable
-) => Effect.Effect<never, WritableError, never> = (writable) =>
+  writable: Writable,
+) => Effect.Effect<never, WritableError> = (writable) =>
   listen({
     emitter: writable,
-    event: 'error',
+    event: "error",
     onEvent: (cause: Error) => Effect.fail(new WritableError({ cause })),
     get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
   });
 
 export type Push<A> = (
-  input: Option.Option<Chunk.Chunk<A>>
-) => Effect.Effect<never, WritableError, void>;
+  input: Option.Option<Chunk.Chunk<A>>,
+) => Effect.Effect<void, WritableError>;
 
 export type SinkablePush<A> = (
-  input: Option.Option<Chunk.Chunk<A>>
+  input: Option.Option<Chunk.Chunk<A>>,
 ) => Effect.Effect<
-  never,
-  readonly [Either.Either<WritableError, void>, Chunk.Chunk<never>],
-  void
+  void,
+  readonly [Either.Either<void, WritableError>, Chunk.Chunk<never>]
 >;
 
 export const push: {
@@ -50,20 +49,20 @@ export const push: {
     options: {
       endOnClose: true;
       encoding?: BufferEncoding;
-    }
-  ): Effect.Effect<Scope.Scope, never, Push<A>>;
+    },
+  ): Effect.Effect<Push<A>, never, Scope.Scope>;
   <A = Buffer>(
     writable: Writable,
     options?: {
       endOnClose?: false | undefined;
       encoding?: BufferEncoding;
-    }
+    },
   ): Push<A>;
 } = (writable, options): any => {
   const drainOrError = Effect.raceAll([onDrain(writable), onError(writable)]);
 
   const push: Push<any> = (input: Option.Option<Chunk.Chunk<any>>) =>
-    Effect.suspend((): Effect.Effect<never, WritableError, void> => {
+    Effect.suspend((): Effect.Effect<void, WritableError> => {
       if (writable.errored) {
         return Effect.fail(new WritableError({ cause: writable.errored }));
       }
@@ -77,9 +76,7 @@ export const push: {
 
       const chunks = Chunk.toReadonlyArray(input.value);
 
-      const go = (
-        _: readonly any[]
-      ): Effect.Effect<never, WritableError, void> => {
+      const go = (_: readonly any[]): Effect.Effect<void, WritableError> => {
         for (const [index, chunk] of _.entries()) {
           if (writable.writableNeedDrain) {
             return Effect.flatMap(drainOrError, () => go(_.slice(index)));
@@ -103,7 +100,7 @@ export const push: {
   return Effect.acquireRelease(Effect.succeed(writable), (writable) => {
     if (!writable.errored && !writable.writableEnded) {
       return Effect.raceAll([
-        Effect.async<never, never, void>((cb) => {
+        Effect.async<void, never>((cb) => {
           writable.end(() => cb(Effect.unit));
         }),
         onError(writable).pipe(Effect.ignore),
@@ -123,20 +120,20 @@ export const toSinkable =
           return Effect.fail([Either.right(undefined), Chunk.empty<never>()]);
         }
         return Effect.unit;
-      })
+      }),
     );
 
 export const write: <T>(
   writable: Writable,
-  encode: Encode<T>
-) => (message: T) => Effect.Effect<never, WritableError, void> =
+  encode: Encode<T>,
+) => (message: T) => Effect.Effect<void, WritableError> =
   (writable, encode) => (message) =>
     push(writable)(Option.some(Chunk.of(encode(message))));
 
 export const writeSink: <T>(
   writable: Writable,
-  encode: Encode<T>
-) => Sink.Sink<never, WritableError, T, never, void> = (writable, encode) =>
+  encode: Encode<T>,
+) => Sink.Sink<void, T, never, WritableError> = (writable, encode) =>
   Sink.fromPush(Effect.succeed(toSinkable(push(writable)))).pipe(
-    Sink.mapInput(encode)
+    Sink.mapInput(encode),
   );

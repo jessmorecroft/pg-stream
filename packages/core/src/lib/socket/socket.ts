@@ -1,60 +1,60 @@
-import { Data, Effect, Option } from 'effect';
-import * as net from 'net';
-import * as tls from 'tls';
-import { listen } from '../util/util';
+import { Data, Effect, Option } from "effect";
+import * as net from "net";
+import * as tls from "tls";
+import { listen } from "../util/util";
 
 interface Options {
   host: string;
   port: number;
 }
 
-export class SocketError extends Data.TaggedError('SocketError')<{
+export class SocketError extends Data.TaggedError("SocketError")<{
   cause: Error;
 }> {}
 
-const onConnect: (socket: net.Socket) => Effect.Effect<never, never, void> = (
-  socket
+const onConnect: (socket: net.Socket) => Effect.Effect<void, never> = (
+  socket,
 ) =>
   listen({
     emitter: socket,
-    event: 'connect',
+    event: "connect",
     onEvent: () => Effect.unit,
     get: (_) => (!_.connecting ? Option.some<void>(undefined) : Option.none()),
   });
 
 export const onError: (
-  socket: net.Socket
-) => Effect.Effect<never, SocketError, never> = (socket) =>
+  socket: net.Socket,
+) => Effect.Effect<never, SocketError> = (socket) =>
   listen({
     emitter: socket,
-    event: 'error',
+    event: "error",
     onEvent: (cause: Error) => Effect.fail(new SocketError({ cause })),
     get: (_) => (_.errored ? Option.some(_.errored) : Option.none()),
   });
 
-const onFinish: (socket: net.Socket) => Effect.Effect<never, never, void> = (
-  socket
+const onFinish: (socket: net.Socket) => Effect.Effect<void, never> = (
+  socket,
 ) =>
   listen({
     emitter: socket,
-    event: 'finish',
+    event: "finish",
     onEvent: () => Effect.unit,
     get: (_) =>
       _.writableFinished ? Option.some<void>(undefined) : Option.none(),
   });
 
 export const onSecureConnect: (
-  socket: tls.TLSSocket
-) => Effect.Effect<never, never, void> = (socket) =>
+  socket: tls.TLSSocket,
+) => Effect.Effect<void, never> = (socket) =>
   listen({
     emitter: socket,
-    event: 'secureConnect',
+    event: "secureConnect",
     onEvent: () => Effect.unit,
     get: () => Option.none(),
   });
 
 export const end = (socket: net.Socket) =>
-  Effect.async<never, never, void>((cb) => {
+  Effect.async<void, never>((cb) => {
     if (socket.errored || socket.writableFinished) {
       cb(Effect.unit);
       return;
@@ -78,6 +78,6 @@ export const connect = ({ host, port }: Options) =>
   Effect.suspend(() => {
     const socket = net.connect({ host, port, allowHalfOpen: false });
     return Effect.raceAll([onConnect(socket), onError(socket)]).pipe(
-      Effect.map(() => socket)
+      Effect.map(() => socket),
     );
   });

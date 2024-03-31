@@ -4,34 +4,34 @@ import {
   DecoratedUpdate,
   PgOutputDecoratedMessageTypes,
   makePgPool,
-} from '../index';
-import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from 'effect';
+} from "../index";
+import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from "effect";
 
 const program = Effect.gen(function* (_) {
   const pgPool = yield* _(
     makePgPool({
-      host: 'localhost',
+      host: "localhost",
       port: 5432,
       useSSL: true,
-      database: 'postgres',
-      username: 'postgres',
-      password: 'topsecret',
+      database: "postgres",
+      username: "postgres",
+      password: "topsecret",
       min: 1,
       max: 10,
-      timeToLive: '1 minutes',
+      timeToLive: "1 minutes",
       replication: true,
-    })
+    }),
   );
 
-  const pg1 = yield* _(pgPool.get());
-  const pg2 = yield* _(pgPool.get());
+  const pg1 = yield* _(pgPool.get);
+  const pg2 = yield* _(pgPool.get);
 
   //yield* _(pg1.query('CREATE PUBLICATION example_publication FOR ALL TABLES'));
 
   yield* _(
     pg1.queryRaw(
-      'CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT'
-    )
+      "CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT",
+    ),
   );
 
   type InsertOrUpdateOrDelete =
@@ -41,21 +41,21 @@ const program = Effect.gen(function* (_) {
 
   const queue = yield* _(Queue.unbounded<[string, InsertOrUpdateOrDelete]>());
 
-  const signal = yield* _(Deferred.make<never, void>());
+  const signal = yield* _(Deferred.make<void>());
 
   const changes = yield* _(
     Effect.zipRight(
       pg1.recvlogical({
-        slotName: 'example_slot',
-        publicationNames: ['example_publication'],
+        slotName: "example_slot",
+        publicationNames: ["example_publication"],
         processor: {
           filter: (
-            msg: PgOutputDecoratedMessageTypes
+            msg: PgOutputDecoratedMessageTypes,
           ): msg is InsertOrUpdateOrDelete =>
-            msg.type === 'Insert' ||
-            msg.type === 'Update' ||
-            msg.type === 'Delete',
-          key: 'table',
+            msg.type === "Insert" ||
+            msg.type === "Update" ||
+            msg.type === "Delete",
+          key: "table",
           process: (key, data) =>
             queue.offerAll(Chunk.map(data, (_) => [key, _])),
         },
@@ -71,22 +71,22 @@ const program = Effect.gen(function* (_) {
     WHERE id = 1;
   DELETE FROM example
     WHERE id = 2;
-  DROP TABLE example;`
+  DROP TABLE example;`,
         )
         .pipe(
           Effect.flatMap(() =>
             Stream.fromQueue(queue).pipe(
               Stream.map(([key, data]) => ({ ...data, key })),
-              Stream.takeUntil((msg) => msg.type === 'Delete'),
-              Stream.runCollect
-            )
+              Stream.takeUntil((msg) => msg.type === "Delete"),
+              Stream.runCollect,
+            ),
           ),
-          Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined)))
+          Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined))),
         ),
       {
         concurrent: true,
-      }
-    )
+      },
+    ),
   );
 
   const changesArray = Chunk.toReadonlyArray(changes);
@@ -94,13 +94,13 @@ const program = Effect.gen(function* (_) {
   yield* _(
     Console.table(
       changesArray,
-      Object.keys(changesArray.find(({ type }) => type === 'Update') ?? [])
-    )
+      Object.keys(changesArray.find(({ type }) => type === "Update") ?? []),
+    ),
   );
 
-  yield* _(pg1.query('DROP PUBLICATION example_publication'));
+  yield* _(pg1.query("DROP PUBLICATION example_publication"));
 });
 
 Effect.runPromise(
-  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal)),
 );

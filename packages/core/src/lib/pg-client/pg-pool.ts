@@ -1,7 +1,7 @@
-import { Pool } from 'effect';
-import { Options, make as makePgClient } from './pg-client';
+import { Pool } from "effect";
+import { Options, make as makePgClient } from "./pg-client";
 
-type PoolOptions = Omit<Parameters<typeof Pool.makeWithTTL>[0], 'acquire'>;
+type PoolOptions = Omit<Parameters<typeof Pool.makeWithTTL>[0], "acquire">;
 
 export type PgPool = ReturnType<typeof make>;
 

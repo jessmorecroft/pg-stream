@@ -1,4 +1,4 @@
-import assert from 'assert';
+import assert from "assert";
 import {
   Begin,
   Commit,
@@ -11,11 +11,11 @@ import {
   Truncate,
   Type,
   Update,
-} from './message-parsers';
-import * as O from 'fp-ts/Option';
-import { pipe } from 'fp-ts/lib/function';
+} from "./message-parsers";
+import * as O from "fp-ts/Option";
+import { pipe } from "fp-ts/lib/function";
 
-type NoTag<T> = Omit<T, 'type'>;
+type NoTag<T> = Omit<T, "type">;
 
 export const makePgOutputBegin = ({
   finalLsn,
@@ -24,7 +24,7 @@ export const makePgOutputBegin = ({
 }: NoTag<Begin>) => {
   const buf = Buffer.allocUnsafe(1 + 8 + 8 + 4);
 
-  let offset = buf.write('B');
+  let offset = buf.write("B");
   offset = buf.writeBigInt64BE(finalLsn, offset);
   offset = buf.writeBigInt64BE(timeStamp, offset);
   offset = buf.writeInt32BE(tranId, offset);
@@ -41,10 +41,10 @@ export const makePgOutputDecodingMessage = ({
   content,
 }: NoTag<Message>) => {
   const buf = Buffer.allocUnsafe(
-    1 + 1 + 8 + prefix.length + 1 + 4 + content.length
+    1 + 1 + 8 + prefix.length + 1 + 4 + content.length,
   );
 
-  let offset = buf.write('M');
+  let offset = buf.write("M");
   offset = buf.writeInt8(isTransactional ? 1 : 0, offset);
   offset = buf.writeBigInt64BE(lsn, offset);
   offset += buf.write(prefix, offset);
@@ -64,7 +64,7 @@ export const makePgOutputCommit = ({
 }: NoTag<Commit>) => {
   const buf = Buffer.allocUnsafe(1 + 1 + 8 + 8 + 8);
 
-  let offset = buf.write('C');
+  let offset = buf.write("C");
   offset = buf.writeInt8(0, offset);
   offset = buf.writeBigInt64BE(lsn, offset);
   offset = buf.writeBigInt64BE(endLsn, offset);
@@ -78,7 +78,7 @@ export const makePgOutputCommit = ({
 export const makePgOutputOrigin = ({ lsn, name }: NoTag<Origin>) => {
   const buf = Buffer.allocUnsafe(1 + 8 + name.length + 1);
 
-  let offset = buf.write('O');
+  let offset = buf.write("O");
   offset = buf.writeBigInt64BE(lsn, offset);
   offset += buf.write(name, offset);
   offset = buf.writeInt8(0, offset);
@@ -104,10 +104,13 @@ export const makePgOutputRelation = ({
       1 +
       1 +
       2 +
-      columns.reduce((acc, value) => acc + 1 + value.name.length + 1 + 4 + 4, 0)
+      columns.reduce(
+        (acc, value) => acc + 1 + value.name.length + 1 + 4 + 4,
+        0,
+      ),
   );
 
-  let offset = buf.write('R');
+  let offset = buf.write("R");
   offset = buf.writeInt32BE(id, offset);
   offset += buf.write(namespace, offset);
   offset = buf.writeInt8(0, offset);
@@ -131,10 +134,10 @@ export const makePgOutputRelation = ({
 
 export const makePgOutputType = ({ id, namespace, name }: NoTag<Type>) => {
   const buf = Buffer.allocUnsafe(
-    1 + 4 + namespace.length + 1 + name.length + 1
+    1 + 4 + namespace.length + 1 + name.length + 1,
   );
 
-  let offset = buf.write('Y');
+  let offset = buf.write("Y");
   offset = buf.writeInt32BE(id, offset);
   offset += buf.write(namespace, offset);
   offset = buf.writeInt8(0, offset);
@@ -146,7 +149,7 @@ export const makePgOutputType = ({ id, namespace, name }: NoTag<Type>) => {
   return buf;
 };
 
-const makePgOutputTupleData = (values: Insert['newRecord']) => {
+const makePgOutputTupleData = (values: Insert["newRecord"]) => {
   const buf = Buffer.allocUnsafe(
     2 +
       values.reduce(
@@ -157,11 +160,11 @@ const makePgOutputTupleData = (values: Insert['newRecord']) => {
             value,
             O.fold(
               () => 0,
-              (v) => (v === null ? 0 : 4 + v.length)
-            )
+              (v) => (v === null ? 0 : 4 + v.length),
+            ),
           ),
-        0
-      )
+        0,
+      ),
   );
 
   let offset = buf.writeInt16BE(values.length);
@@ -171,22 +174,22 @@ const makePgOutputTupleData = (values: Insert['newRecord']) => {
       value,
       O.fold(
         () => {
-          offset += buf.write('u', offset);
+          offset += buf.write("u", offset);
         },
         (item) => {
           if (item === null) {
-            offset += buf.write('n', offset);
-          } else if (typeof item === 'string') {
-            offset += buf.write('t', offset);
+            offset += buf.write("n", offset);
+          } else if (typeof item === "string") {
+            offset += buf.write("t", offset);
             offset = buf.writeInt32BE(item.length, offset);
             offset += buf.write(item, offset);
           } else {
-            offset += buf.write('b', offset);
+            offset += buf.write("b", offset);
             offset = buf.writeInt32BE(item.length, offset);
             offset += item.copy(buf, offset);
           }
-        }
-      )
+        },
+      ),
     );
   });
 
@@ -201,9 +204,9 @@ export const makePgOutputInsert = ({
 }: NoTag<Insert>) => {
   const buf1 = Buffer.allocUnsafe(1 + 4 + 1);
 
-  let offset = buf1.write('I');
+  let offset = buf1.write("I");
   offset = buf1.writeInt32BE(relationId, offset);
-  offset += buf1.write('N', offset);
+  offset += buf1.write("N", offset);
 
   assert(offset === buf1.length, `offset ${offset} != length ${buf1.length}`);
 
@@ -219,7 +222,7 @@ export const makePgOutputUpdate = ({
   newRecord,
 }: NoTag<Update>) => {
   const buf1 = Buffer.allocUnsafe(1 + 4);
-  const offset = buf1.write('U');
+  const offset = buf1.write("U");
   buf1.writeInt32BE(relationId, offset);
 
   const buf2 = pipe(
@@ -228,11 +231,11 @@ export const makePgOutputUpdate = ({
       () => Buffer.from([]),
       (data) => {
         const header = Buffer.allocUnsafe(1);
-        header.write('K');
+        header.write("K");
         const tupleBuf = makePgOutputTupleData(data);
         return Buffer.concat([header, tupleBuf]);
-      }
-    )
+      },
+    ),
   );
 
   const buf3 = pipe(
@@ -241,15 +244,15 @@ export const makePgOutputUpdate = ({
       () => Buffer.from([]),
       (data) => {
         const header = Buffer.allocUnsafe(1);
-        header.write('O');
+        header.write("O");
         const tupleBuf = makePgOutputTupleData(data);
         return Buffer.concat([header, tupleBuf]);
-      }
-    )
+      },
+    ),
   );
 
   const buf4 = Buffer.allocUnsafe(1);
-  buf4.write('N');
+  buf4.write("N");
   const buf5 = makePgOutputTupleData(newRecord);
 
   return Buffer.concat([buf1, buf2, buf3, buf4, buf5]);
@@ -261,7 +264,7 @@ export const makePgOutputDelete = ({
   oldRecord,
 }: NoTag<Delete>) => {
   const buf1 = Buffer.allocUnsafe(1 + 4);
-  const offset = buf1.write('D');
+  const offset = buf1.write("D");
   buf1.writeInt32BE(relationId, offset);
 
   const buf2 = pipe(
@@ -270,11 +273,11 @@ export const makePgOutputDelete = ({
       () => Buffer.from([]),
       (data) => {
         const header = Buffer.allocUnsafe(1);
-        header.write('K');
+        header.write("K");
         const tupleBuf = makePgOutputTupleData(data);
         return Buffer.concat([header, tupleBuf]);
-      }
-    )
+      },
+    ),
   );
 
   const buf3 = pipe(
@@ -283,11 +286,11 @@ export const makePgOutputDelete = ({
       () => Buffer.from([]),
       (data) => {
         const header = Buffer.allocUnsafe(1);
-        header.write('O');
+        header.write("O");
         const tupleBuf = makePgOutputTupleData(data);
         return Buffer.concat([header, tupleBuf]);
-      }
-    )
+      },
+    ),
   );
 
   return Buffer.concat([buf1, buf2, buf3]);
@@ -299,7 +302,7 @@ export const makePgOutputTruncate = ({
 }: NoTag<Truncate>) => {
   const buf = Buffer.allocUnsafe(1 + 4 + 1 + relationIds.length * 4);
 
-  let offset = buf.write('T');
+  let offset = buf.write("T");
   offset = buf.writeInt32BE(relationIds.length, offset);
   offset = buf.writeInt8(options, offset);
 
@@ -314,25 +317,25 @@ export const makePgOutputTruncate = ({
 
 export const makePgOutputMessage = (message: PgOutputMessageTypes): Buffer => {
   switch (message.type) {
-    case 'Begin':
+    case "Begin":
       return makePgOutputBegin(message);
-    case 'Message':
+    case "Message":
       return makePgOutputDecodingMessage(message);
-    case 'Commit':
+    case "Commit":
       return makePgOutputCommit(message);
-    case 'Origin':
+    case "Origin":
       return makePgOutputOrigin(message);
-    case 'Relation':
+    case "Relation":
       return makePgOutputRelation(message);
-    case 'Type':
+    case "Type":
       return makePgOutputType(message);
-    case 'Insert':
+    case "Insert":
       return makePgOutputInsert(message);
-    case 'Update':
+    case "Update":
       return makePgOutputUpdate(message);
-    case 'Delete':
+    case "Delete":
       return makePgOutputDelete(message);
-    case 'Truncate':
+    case "Truncate":
       return makePgOutputTruncate(message);
   }
 };

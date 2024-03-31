@@ -1,28 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Effect } from 'effect';
-import { MakeValueTypeParserOptions } from '../pg-protocol';
+import { Effect } from "effect";
+import { MakeValueTypeParserOptions } from "../pg-protocol";
 import {
   NoMoreMessagesError,
   ParseMessageError,
   ParseMessageGroupError,
   ReadableError,
   WritableError,
-} from '../stream';
-import { Duplex } from 'stream';
-import { PgParseError, PgServerError } from './util';
-import * as Schema from '@effect/schema/Schema';
-import { queryRaw } from './query-raw';
-import { formatErrors } from '@effect/schema/TreeFormatter';
+} from "../stream";
+import { Duplex } from "stream";
+import { PgParseError, PgServerError } from "./util";
+import * as Schema from "@effect/schema/Schema";
+import { queryRaw } from "./query-raw";
+import { formatError } from "@effect/schema/TreeFormatter";
 
 export const queryMany =
   (socket: Duplex) =>
-  <S extends Schema.Schema<any, any>>(
+  <S extends Schema.Schema<any, any, any>>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
-    schema: S
+    schema: S,
   ): Effect.Effect<
-    never,
+    readonly Schema.Schema.Type<S>[],
     | ReadableError
     | WritableError
     | NoMoreMessagesError
@@ -30,24 +30,24 @@ export const queryMany =
     | ParseMessageGroupError
     | PgServerError
     | PgParseError,
-    readonly Schema.Schema.To<S>[]
+    Schema.Schema.Context<S>
   > => {
     const { sql, parserOptions } =
-      typeof sqlOrOptions === 'string'
+      typeof sqlOrOptions === "string"
         ? { sql: sqlOrOptions, parserOptions: undefined }
         : sqlOrOptions;
 
     return queryRaw(socket)(sql, parserOptions).pipe(
       Effect.flatMap((rows) =>
-        Schema.parse(Schema.array(schema))(rows).pipe(
+        Schema.decodeUnknown(Schema.array(schema))(rows).pipe(
           Effect.mapError(
             (pe) =>
               new PgParseError({
-                message: formatErrors(pe.errors),
-              })
+                message: formatError(pe),
+              }),
           ),
-          Effect.tapError((pe) => Effect.logError(`\n${pe.message}`))
-        )
-      )
+          Effect.tapError((pe) => Effect.logError(`\n${pe.message}`)),
+        ),
+      ),
     );
   };

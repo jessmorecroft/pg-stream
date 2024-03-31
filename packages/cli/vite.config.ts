@@ -1,10 +1,10 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { defineConfig } from "vite";
 
-import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin';
+import { nxViteTsPaths } from "@nx/vite/plugins/nx-tsconfig-paths.plugin";
 
 export default defineConfig({
-  cacheDir: '../../node_modules/.vite/packages/cli',
+  cacheDir: "../../node_modules/.vite/packages/cli",
 
   plugins: [nxViteTsPaths()],
 
@@ -14,11 +14,12 @@ export default defineConfig({
   // },
 
   test: {
+    reporters: ["default"],
     globals: true,
     cache: {
-      dir: '../../node_modules/.vitest',
+      dir: "../../node_modules/.vitest",
     },
-    environment: 'node',
-    include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    environment: "node",
+    include: ["src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
   },
 });

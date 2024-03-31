@@ -1,239 +1,239 @@
-import { pipe } from 'fp-ts/lib/function';
-import * as P from 'parser-ts/Parser';
-import * as O from 'fp-ts/Option';
-import * as B from '../../parser/buffer';
-import * as P2 from '../../parser/parser';
-import { ValueOf, repeat, oneOfArray } from '../../parser/parser';
+import { pipe } from "fp-ts/lib/function";
+import * as P from "parser-ts/Parser";
+import * as O from "fp-ts/Option";
+import * as B from "../../parser/buffer";
+import * as P2 from "../../parser/parser";
+import { ValueOf, repeat, oneOfArray } from "../../parser/parser";
 
 export const begin = pipe(
-  B.buffer('B'),
+  B.buffer("B"),
   P.chain(() => B.int64BE()),
-  P.bindTo('finalLsn'),
-  P.bind('timeStamp', () => B.int64BE()),
-  P.bind('tranId', () => B.int32BE()),
+  P.bindTo("finalLsn"),
+  P.bind("timeStamp", () => B.int64BE()),
+  P.bind("tranId", () => B.int32BE()),
   P.map(({ finalLsn, timeStamp, tranId }) => ({
-    type: 'Begin' as const,
+    type: "Begin" as const,
     finalLsn,
     timeStamp,
-    tranId
-  }))
+    tranId,
+  })),
 );
 
 export const message = pipe(
-  B.buffer('M'),
+  B.buffer("M"),
   P.chain(() => B.boolean),
-  P.bindTo('isTransactional'),
-  P.bind('lsn', () => B.int64BE()),
-  P.bind('prefix', () => B.nullString()),
-  P.bind('content', () =>
+  P.bindTo("isTransactional"),
+  P.bind("lsn", () => B.int64BE()),
+  P.bind("prefix", () => B.nullString()),
+  P.bind("content", () =>
     pipe(
       B.int32BE(),
-      P.chain((length) => B.string()(length))
-    )
+      P.chain((length) => B.string()(length)),
+    ),
   ),
   P.map(({ isTransactional, lsn, prefix, content }) => ({
-    type: 'Message' as const,
+    type: "Message" as const,
     isTransactional,
     lsn,
     prefix,
-    content
-  }))
+    content,
+  })),
 );
 
 export const commit = pipe(
-  B.buffer('C'),
+  B.buffer("C"),
   P.chain(() => P.sat<number>((c) => c === 0)),
   P.chain(() => B.int64BE()),
-  P.bindTo('lsn'),
-  P.bind('endLsn', () => B.int64BE()),
-  P.bind('timeStamp', () => B.int64BE()),
+  P.bindTo("lsn"),
+  P.bind("endLsn", () => B.int64BE()),
+  P.bind("timeStamp", () => B.int64BE()),
   P.map(({ lsn, endLsn, timeStamp }) => ({
-    type: 'Commit' as const,
+    type: "Commit" as const,
     lsn,
     endLsn,
-    timeStamp
-  }))
+    timeStamp,
+  })),
 );
 
 export const origin = pipe(
-  B.buffer('O'),
+  B.buffer("O"),
   P.chain(() => B.int64BE()),
-  P.bindTo('lsn'),
-  P.bind('name', () => B.nullString()),
+  P.bindTo("lsn"),
+  P.bind("name", () => B.nullString()),
   P.map(({ lsn, name }) => ({
-    type: 'Origin' as const,
+    type: "Origin" as const,
     lsn,
-    name
-  }))
+    name,
+  })),
 );
 
 export const relation = pipe(
-  B.buffer('R'),
+  B.buffer("R"),
   P.chain(() => B.int32BE()),
-  P.bindTo('id'),
-  P.bind('namespace', () => B.nullString()),
-  P.bind('name', () => B.nullString()),
-  P.bind('replIdent', () =>
+  P.bindTo("id"),
+  P.bind("namespace", () => B.nullString()),
+  P.bind("name", () => B.nullString()),
+  P.bind("replIdent", () =>
     B.keyOf({
       d: null,
       n: null,
       f: null,
-      i: null
-    })(1)
+      i: null,
+    })(1),
   ),
-  P.bind('columns', () =>
+  P.bind("columns", () =>
     pipe(
       B.int16BE(),
-      P.bindTo('count'),
+      P.bindTo("count"),
       P.chain(({ count }) =>
         repeat(count)(
           pipe(
             B.boolean,
-            P.bindTo('isKey'),
-            P.bind('name', () => B.nullString()),
-            P.bind('dataTypeId', () => B.int32BE()),
-            P.bind('typeMod', () => B.int32BE())
-          )
-        )
-      )
-    )
+            P.bindTo("isKey"),
+            P.bind("name", () => B.nullString()),
+            P.bind("dataTypeId", () => B.int32BE()),
+            P.bind("typeMod", () => B.int32BE()),
+          ),
+        ),
+      ),
+    ),
   ),
   P.map(({ id, namespace, name, replIdent, columns }) => ({
-    type: 'Relation' as const,
+    type: "Relation" as const,
     id,
     namespace,
     name,
     replIdent,
-    columns
-  }))
+    columns,
+  })),
 );
 
 export const type = pipe(
-  B.buffer('Y'),
+  B.buffer("Y"),
   P.chain(() => B.int32BE()),
-  P.bindTo('id'),
-  P.bind('namespace', () => B.nullString()),
-  P.bind('name', () => B.nullString()),
+  P.bindTo("id"),
+  P.bind("namespace", () => B.nullString()),
+  P.bind("name", () => B.nullString()),
   P.map(({ id, namespace, name }) => ({
-    type: 'Type' as const,
+    type: "Type" as const,
     id,
     namespace,
-    name
-  }))
+    name,
+  })),
 );
 
 const tupleValueParsers: P.Parser<number, O.Option<null | string | Buffer>>[] =
   [
     pipe(
-      B.buffer('n'),
-      P.map(() => O.some(null))
+      B.buffer("n"),
+      P.map(() => O.some(null)),
     ),
     pipe(
-      B.buffer('u'),
-      P.map(() => O.none)
+      B.buffer("u"),
+      P.map(() => O.none),
     ),
     pipe(
-      B.buffer('t'),
+      B.buffer("t"),
       P.chain(() => B.int32BE()),
       P.chain((length) => B.string()(length)),
-      P.map((val) => O.some(val))
+      P.map((val) => O.some(val)),
     ),
     pipe(
-      B.buffer('b'),
+      B.buffer("b"),
       P.chain(() => B.int32BE()),
       P.chain((length) => P2.items<number>(length)),
-      P.map((buf) => O.some(buf as unknown as Buffer))
-    )
+      P.map((buf) => O.some(buf as unknown as Buffer)),
+    ),
   ];
 
 const tupleData = pipe(
   B.int16BE(),
-  P.chain((count) => repeat(count)(oneOfArray(tupleValueParsers)))
+  P.chain((count) => repeat(count)(oneOfArray(tupleValueParsers))),
 );
 
 export const insert = pipe(
-  B.buffer('I'),
+  B.buffer("I"),
   P.chain(() => B.int32BE()),
-  P.bindTo('relationId'),
-  P.chainFirst(() => B.buffer('N')),
-  P.bind('newRecord', () => tupleData),
+  P.bindTo("relationId"),
+  P.chainFirst(() => B.buffer("N")),
+  P.bind("newRecord", () => tupleData),
   P.map(({ relationId, newRecord }) => ({
-    type: 'Insert' as const,
+    type: "Insert" as const,
     relationId,
-    newRecord
-  }))
+    newRecord,
+  })),
 );
 
 export const update = pipe(
-  B.buffer('U'),
+  B.buffer("U"),
   P.chain(() => B.int32BE()),
-  P.bindTo('relationId'),
-  P.bind('oldKey', () =>
+  P.bindTo("relationId"),
+  P.bind("oldKey", () =>
     P.optional(
       pipe(
-        B.buffer('K'),
-        P.chain(() => tupleData)
-      )
-    )
+        B.buffer("K"),
+        P.chain(() => tupleData),
+      ),
+    ),
   ),
-  P.bind('oldRecord', () =>
+  P.bind("oldRecord", () =>
     P.optional(
       pipe(
-        B.buffer('O'),
-        P.chain(() => tupleData)
-      )
-    )
+        B.buffer("O"),
+        P.chain(() => tupleData),
+      ),
+    ),
   ),
-  P.chainFirst(() => B.buffer('N')),
-  P.bind('newRecord', () => tupleData),
+  P.chainFirst(() => B.buffer("N")),
+  P.bind("newRecord", () => tupleData),
   P.map(({ relationId, oldKey, oldRecord, newRecord }) => ({
-    type: 'Update' as const,
+    type: "Update" as const,
     relationId,
     oldKey,
     oldRecord,
-    newRecord
-  }))
+    newRecord,
+  })),
 );
 
 export const destroy = pipe(
-  B.buffer('D'),
+  B.buffer("D"),
   P.chain(() => B.int32BE()),
-  P.bindTo('relationId'),
-  P.bind('oldKey', () =>
+  P.bindTo("relationId"),
+  P.bind("oldKey", () =>
     P.optional(
       pipe(
-        B.buffer('K'),
-        P.chain(() => tupleData)
-      )
-    )
+        B.buffer("K"),
+        P.chain(() => tupleData),
+      ),
+    ),
   ),
-  P.bind('oldRecord', () =>
+  P.bind("oldRecord", () =>
     P.optional(
       pipe(
-        B.buffer('O'),
-        P.chain(() => tupleData)
-      )
-    )
+        B.buffer("O"),
+        P.chain(() => tupleData),
+      ),
+    ),
   ),
   P.map(({ relationId, oldKey, oldRecord }) => ({
-    type: 'Delete' as const,
+    type: "Delete" as const,
     relationId,
     oldKey,
-    oldRecord
-  }))
+    oldRecord,
+  })),
 );
 
 export const truncate = pipe(
-  B.buffer('T'),
+  B.buffer("T"),
   P.chain(() => B.int32BE()),
-  P.bindTo('count'),
-  P.bind('options', () => P.item<number>()),
-  P.bind('relationIds', ({ count }) => P2.repeat(count)(B.int32BE())),
+  P.bindTo("count"),
+  P.bind("options", () => P.item<number>()),
+  P.bind("relationIds", ({ count }) => P2.repeat(count)(B.int32BE())),
   P.map(({ options, relationIds }) => ({
-    type: 'Truncate' as const,
+    type: "Truncate" as const,
     options,
-    relationIds
-  }))
+    relationIds,
+  })),
 );
 
 export type TupleData = ValueOf<typeof tupleData>;
@@ -273,7 +273,7 @@ export const pgOutputMessageParsers: PgOutputMessageParser[] = [
   insert,
   update,
   destroy,
-  truncate
+  truncate,
 ];
 
 export const pgOutputMessageParser = oneOfArray(pgOutputMessageParsers);

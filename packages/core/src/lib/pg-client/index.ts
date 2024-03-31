@@ -2,7 +2,7 @@ export {
   ALL_ENABLED_PARSER_OPTIONS,
   DEFAULT_PARSER_OPTIONS,
   NONE_ENABLED_PARSER_OPTIONS,
-} from '../pg-protocol';
+} from "../pg-protocol";
 
 export type {
   DecoratedBegin,
@@ -13,15 +13,15 @@ export type {
   DecoratedTruncate,
   DecoratedUpdate,
   PgOutputDecoratedMessageTypes,
-} from './transform-log-data';
+} from "./transform-log-data";
 
 export {
   XLogProcessor,
   PgFailedAuth,
   PgParseError,
   PgServerError,
-} from './util';
+} from "./util";
 
-export { PgClient, make as makePgClient } from './pg-client';
+export { PgClient, make as makePgClient } from "./pg-client";
 
-export { PgPool, make as makePgPool } from './pg-pool';
+export { PgPool, make as makePgPool } from "./pg-pool";

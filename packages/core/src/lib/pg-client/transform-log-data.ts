@@ -13,21 +13,21 @@ import {
   Begin,
   Commit,
   MakeValueTypeParserOptions,
-} from '../pg-protocol';
-import * as P from 'parser-ts/Parser';
-import * as S from 'parser-ts/string';
-import { pipe } from 'fp-ts/function';
-import * as O from 'fp-ts/Option';
-import * as E from 'fp-ts/Either';
-import { Data, Effect } from 'effect';
+} from "../pg-protocol";
+import * as P from "parser-ts/Parser";
+import * as S from "parser-ts/string";
+import { pipe } from "fp-ts/function";
+import * as O from "fp-ts/Option";
+import * as E from "fp-ts/Either";
+import { Data, Effect } from "effect";
 
-export type DecoratedRelation = Omit<Relation, 'columns'> & {
-  columns: (Relation['columns'][number] & {
+export type DecoratedRelation = Omit<Relation, "columns"> & {
+  columns: (Relation["columns"][number] & {
     dataTypeName: ReturnType<typeof getTypeName>;
   })[];
 };
 
-export type DecoratedBegin = Omit<Begin, 'timeStamp'> & {
+export type DecoratedBegin = Omit<Begin, "timeStamp"> & {
   timeStamp: Date;
 };
 
@@ -35,7 +35,7 @@ export type DecoratedCommit = Commit & {
   begin: DecoratedBegin;
 };
 
-export type DecoratedInsert = Omit<Insert, 'relationId' | 'newRecord'> & {
+export type DecoratedInsert = Omit<Insert, "relationId" | "newRecord"> & {
   namespace: string;
   name: string;
   begin: DecoratedBegin;
@@ -44,7 +44,7 @@ export type DecoratedInsert = Omit<Insert, 'relationId' | 'newRecord'> & {
 
 export type DecoratedUpdate = Omit<
   Update,
-  'relationId' | 'newRecord' | 'oldRecord' | 'oldKey'
+  "relationId" | "newRecord" | "oldRecord" | "oldKey"
 > & {
   namespace: string;
   name: string;
@@ -56,7 +56,7 @@ export type DecoratedUpdate = Omit<
 
 export type DecoratedDelete = Omit<
   Delete,
-  'relationId' | 'oldRecord' | 'oldKey'
+  "relationId" | "oldRecord" | "oldKey"
 > & {
   namespace: string;
   name: string;
@@ -65,7 +65,7 @@ export type DecoratedDelete = Omit<
   oldRecord?: Record<string, ValueType | null>;
 };
 
-export type DecoratedTruncate = Omit<Truncate, 'relationIds'> & {
+export type DecoratedTruncate = Omit<Truncate, "relationIds"> & {
   relations: {
     namespace: string;
     name: string;
@@ -97,66 +97,68 @@ export type TableInfoMap = Map<
 >;
 
 export class TableInfoNotFoundError extends Data.TaggedError(
-  'TableInfoNotFoundError'
+  "TableInfoNotFoundError",
 )<{
   key: unknown;
 }> {}
 
 export class NoTransactionContextError extends Data.TaggedError(
-  'NoTransactionContexError'
+  "NoTransactionContexError",
 )<{
   logData: XLogData;
 }> {}
 
 const convertTupleData = (tupleData: TupleData, parsers: NamedParser[]) =>
-  tupleData.reduce((acc, item, index) => {
-    const { name, parser } = parsers[index];
+  tupleData.reduce(
+    (acc, item, index) => {
+      const { name, parser } = parsers[index];
 
-    const value = pipe(
-      item,
-      O.fold(
-        () => undefined,
-        (val) =>
-          typeof val === 'string'
-            ? pipe(
-                S.run(val)(parser),
-                E.fold(
-                  () => val,
-                  ({ value }) => value
+      const value = pipe(
+        item,
+        O.fold(
+          () => undefined,
+          (val) =>
+            typeof val === "string"
+              ? pipe(
+                  S.run(val)(parser),
+                  E.fold(
+                    () => val,
+                    ({ value }) => value,
+                  ),
                 )
-              )
-            : val
-      )
-    );
+              : val,
+        ),
+      );
 
-    if (value !== undefined) {
-      return { ...acc, [name]: value };
-    }
-    return acc;
-  }, {} as Record<string, ValueType | null>);
+      if (value !== undefined) {
+        return { ...acc, [name]: value };
+      }
+      return acc;
+    },
+    {} as Record<string, ValueType | null>,
+  );
 
 export const transformLogData = (
   tableInfo: TableInfoMap,
   logData: XLogData,
   begin?: DecoratedBegin,
-  parserOptions?: MakeValueTypeParserOptions
+  parserOptions?: MakeValueTypeParserOptions,
 ): Effect.Effect<
-  never,
-  TableInfoNotFoundError | NoTransactionContextError,
-  PgOutputDecoratedMessageTypes
+  PgOutputDecoratedMessageTypes,
+  TableInfoNotFoundError | NoTransactionContextError
 > => {
   const xlog = logData.payload;
   switch (xlog.type) {
-    case 'Begin': {
+    case "Begin": {
       const begin: DecoratedBegin = {
         ...xlog,
         timeStamp: new Date(
-          Number(xlog.timeStamp / 1000n) + Date.UTC(2000, 0, 1)
+          Number(xlog.timeStamp / 1000n) + Date.UTC(2000, 0, 1),
         ),
       };
       return Effect.succeed(begin);
     }
-    case 'Commit': {
+    case "Commit": {
       if (!begin) {
         return Effect.fail(new NoTransactionContextError({ logData }));
       }
@@ -166,7 +168,7 @@ export const transformLogData = (
       };
       return Effect.succeed(commit);
     }
-    case 'Relation': {
+    case "Relation": {
       const columns = xlog.columns.map((col) => {
         const dataTypeName = getTypeName(col.dataTypeId);
         return {
@@ -187,7 +189,7 @@ export const transformLogData = (
       const relation: DecoratedRelation = { ...xlog, columns };
       return Effect.succeed(relation);
     }
-    case 'Insert': {
+    case "Insert": {
       if (!begin) {
         return Effect.fail(new NoTransactionContextError({ logData }));
       }
@@ -208,7 +210,7 @@ export const transformLogData = (
 
       return Effect.succeed(insert);
     }
-    case 'Update': {
+    case "Update": {
       if (!begin) {
         return Effect.fail(new NoTransactionContextError({ logData }));
       }
@@ -223,15 +225,15 @@ export const transformLogData = (
         xlog.oldKey,
         O.fold(
           () => undefined,
-          (tuple) => convertTupleData(tuple, colParsers)
-        )
+          (tuple) => convertTupleData(tuple, colParsers),
+        ),
       );
       const oldRecord = pipe(
         xlog.oldRecord,
         O.fold(
           () => undefined,
-          (tuple) => convertTupleData(tuple, colParsers)
-        )
+          (tuple) => convertTupleData(tuple, colParsers),
+        ),
       );
       const update: DecoratedUpdate = {
         type,
@@ -244,7 +246,7 @@ export const transformLogData = (
       };
       return Effect.succeed(update);
     }
-    case 'Delete': {
+    case "Delete": {
       if (!begin) {
         return Effect.fail(new NoTransactionContextError({ logData }));
       }
@@ -258,15 +260,15 @@ export const transformLogData = (
         xlog.oldKey,
         O.fold(
           () => undefined,
-          (tuple) => convertTupleData(tuple, colParsers)
-        )
+          (tuple) => convertTupleData(tuple, colParsers),
+        ),
       );
       const oldRecord = pipe(
         xlog.oldRecord,
         O.fold(
           () => undefined,
-          (tuple) => convertTupleData(tuple, colParsers)
-        )
+          (tuple) => convertTupleData(tuple, colParsers),
+        ),
       );
       const destroy: DecoratedDelete = {
         type,
@@ -278,7 +280,7 @@ export const transformLogData = (
       };
       return Effect.succeed(destroy);
     }
-    case 'Truncate': {
+    case "Truncate": {
       const { type, options } = xlog;
       const notFound: number[] = [];
       const relations = xlog.relationIds.flatMap((relationId) => {
@@ -299,7 +301,7 @@ export const transformLogData = (
         return Effect.fail(
           new TableInfoNotFoundError({
             key: notFound,
-          })
+          }),
         );
       }
       const truncate: DecoratedTruncate = {

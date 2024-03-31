@@ -1,18 +1,18 @@
-import { Schema } from '@effect/schema';
-import { makePgClient, ALL_ENABLED_PARSER_OPTIONS } from '../index';
-import { Effect, Stream } from 'effect';
-import { inspect } from 'util';
+import { Schema } from "@effect/schema";
+import { makePgClient, ALL_ENABLED_PARSER_OPTIONS } from "../index";
+import { Effect, Stream } from "effect";
+import { inspect } from "util";
 
 const program = Effect.gen(function* (_) {
   const pg = yield* _(
     makePgClient({
-      username: 'postgres',
-      password: 'topsecret',
-      database: 'postgres',
-      host: 'localhost',
+      username: "postgres",
+      password: "topsecret",
+      database: "postgres",
+      host: "localhost",
       port: 5432,
       useSSL: true,
-    })
+    }),
   );
 
   // Let's query something simple, no parsing.
@@ -28,14 +28,14 @@ const program = Effect.gen(function* (_) {
     );
     INSERT INTO dog (name, bark) VALUES ('ralph', 'woof'), ('spot', 'arf');
     SELECT * FROM dog;`,
-        {} // no parsing
+        {}, // no parsing
       )
-      .pipe(Stream.runCollect)
+      .pipe(Stream.runCollect),
   );
 
   const logResults = <A>(results: Iterable<readonly [A, number]>) =>
     Effect.forEach(results, ([row, index]) =>
-      Effect.log(`row ${index}: ${inspect(row)}`)
+      Effect.log(`row ${index}: ${inspect(row)}`),
     );
 
   yield* _(logResults(dogs));
@@ -44,12 +44,12 @@ const program = Effect.gen(function* (_) {
   const dogSchema = Schema.struct({
     id: Schema.number,
     name: Schema.string,
-    bark: Schema.literal('woof', 'arf'),
+    bark: Schema.literal("woof", "arf"),
     created: Schema.DateFromSelf,
   });
 
   const dogs2 = yield* _(
-    pg.queryStream('SELECT * FROM dog', dogSchema).pipe(Stream.runCollect)
+    pg.queryStream("SELECT * FROM dog", dogSchema).pipe(Stream.runCollect),
   );
 
   yield* _(logResults(dogs2));
@@ -58,7 +58,7 @@ const program = Effect.gen(function* (_) {
   const dogSchema2 = Schema.struct({
     id: Schema.number,
     name: Schema.string,
-    bark: Schema.literal('woof', 'arf'),
+    bark: Schema.literal("woof", "arf"),
     created: Schema.string,
   });
 
@@ -66,15 +66,15 @@ const program = Effect.gen(function* (_) {
     pg
       .queryStream(
         {
-          sql: 'SELECT * FROM dog',
+          sql: "SELECT * FROM dog",
           parserOptions: {
             ...ALL_ENABLED_PARSER_OPTIONS,
             parseDates: false,
           },
         },
-        dogSchema2
+        dogSchema2,
       )
-      .pipe(Stream.runCollect)
+      .pipe(Stream.runCollect),
   );
 
   yield* _(logResults(dogs3));
@@ -100,25 +100,25 @@ const program = Effect.gen(function* (_) {
     INSERT INTO cat (name, lives) VALUES ('garfield', 9), ('felix', 2);
     SELECT * FROM dog;
     SELECT * FROM cat`,
-        Schema.attachPropertySignature('kind', 'dog')(dogSchema),
-        Schema.attachPropertySignature('kind', 'cat')(catSchema)
+        dogSchema.pipe(Schema.attachPropertySignature("kind", "dog")),
+        catSchema.pipe(Schema.attachPropertySignature("kind", "cat")),
       )
       .pipe(
         Stream.tap(([animal]) => {
-          if (animal.kind === 'cat') {
+          if (animal.kind === "cat") {
             return Effect.log(`${animal.name} has ${animal.lives} lives!`);
           }
           return Effect.log(
-            `${animal.name}'s bark sounds like "${animal.bark}"!`
+            `${animal.name}'s bark sounds like "${animal.bark}"!`,
           );
         }),
-        Stream.runCollect
-      )
+        Stream.runCollect,
+      ),
   );
 
   yield* _(logResults(dogsAndCats));
 });
 
 Effect.runPromise(
-  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal)),
 );

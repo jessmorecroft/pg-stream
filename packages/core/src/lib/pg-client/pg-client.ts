@@ -1,15 +1,15 @@
-import { Effect, Stream, flow } from 'effect';
-import { pgSSLRequestResponse } from '../pg-protocol/message-parsers';
-import { authenticate } from './authenticate';
-import * as stream from '../stream';
-import { connect, end, clientTlsConnect } from '../socket';
-import { PgClientError, PgFailedAuth, write } from './util';
-import { query } from './query';
-import { queryRaw } from './query-raw';
-import { queryStream } from './query-stream';
-import { queryStreamRaw } from './query-stream-raw';
-import { queryMany } from './query-many';
-import { recvlogical } from './recvlogical';
+import { Effect, Stream, flow } from "effect";
+import { pgSSLRequestResponse } from "../pg-protocol/message-parsers";
+import { authenticate } from "./authenticate";
+import * as stream from "../stream";
+import { connect, end, clientTlsConnect } from "../socket";
+import { PgClientError, PgFailedAuth, write } from "./util";
+import { query } from "./query";
+import { queryRaw } from "./query-raw";
+import { queryStream } from "./query-stream";
+import { queryStreamRaw } from "./query-stream-raw";
+import { queryMany } from "./query-many";
+import { recvlogical } from "./recvlogical";
 
 export interface Options {
   host: string;
@@ -23,7 +23,7 @@ export interface Options {
 
 export type PgClient = Effect.Effect.Success<ReturnType<typeof make>>;
 
-const mapPgClientError = (cause: PgClientError['cause']): PgClientError =>
+const mapPgClientError = (cause: PgClientError["cause"]): PgClientError =>
   new PgClientError({ cause });
 
 export const make = ({ useSSL, ...options }: Options) =>
@@ -31,10 +31,10 @@ export const make = ({ useSSL, ...options }: Options) =>
     let socket = yield* _(connect(options));
 
     if (useSSL || useSSL === undefined) {
-      yield* _(write(socket)({ type: 'SSLRequest', requestCode: 80877103 }));
+      yield* _(write(socket)({ type: "SSLRequest", requestCode: 80877103 }));
 
       const reply = yield* _(
-        stream.read(socket, stream.decode(pgSSLRequestResponse))
+        stream.read(socket, stream.decode(pgSSLRequestResponse)),
       );
 
       if (reply.useSSL) {
@@ -43,13 +43,13 @@ export const make = ({ useSSL, ...options }: Options) =>
         if (useSSL) {
           return yield* _(
             new PgFailedAuth({
-              msg: 'Postgres server does not support SSL',
+              msg: "Postgres server does not support SSL",
               reply,
-            })
+            }),
           );
         }
 
-        yield* _(Effect.logWarning('Postgres server does not support SSL'));
+        yield* _(Effect.logWarning("Postgres server does not support SSL"));
       }
     }
 
@@ -63,17 +63,17 @@ export const make = ({ useSSL, ...options }: Options) =>
       queryStream: flow(queryStream(socket), Stream.mapError(mapPgClientError)),
       queryStreamRaw: flow(
         queryStreamRaw(socket),
-        Stream.mapError(mapPgClientError)
+        Stream.mapError(mapPgClientError),
       ),
       queryMany: flow(queryMany(socket), Effect.mapError(mapPgClientError)),
       recvlogical: flow(
         recvlogical(socket),
         Effect.mapError((e) => {
-          if (e._tag === 'XLogProcessorError') {
+          if (e._tag === "XLogProcessorError") {
             return e;
           }
           return mapPgClientError(e);
-        })
+        }),
       ),
       ...info,
     };

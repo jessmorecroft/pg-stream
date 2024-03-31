@@ -9,16 +9,5 @@
   "publishConfig": {
     "directory": "../../dist/packages/core"
   },
-  "dependencies": {
-    "fp-ts": "^2.16.1",
-    "io-ts": "^2.2.20",
-    "lodash": "^4.17.21",
-    "parser-ts": "^0.7.0"
-  },
-  "peerDependencies": {
-    "@effect/platform-node": "^0.27.4",
-    "@effect/schema": "^0.46.3",
-    "decimal.js": "^10.4.3",
-    "effect": "^2.0.0-next.52"
-  }
+  "dependencies": {}
 }

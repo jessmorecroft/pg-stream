@@ -1,8 +1,8 @@
-import { Effect, Stream } from 'effect';
-import { DataRow } from '../pg-protocol/message-parsers';
-import { MakeValueTypeParserOptions, ValueType } from '../pg-protocol';
-import * as stream from '../stream';
-import { Duplex } from 'stream';
+import { Effect, Stream } from "effect";
+import { DataRow } from "../pg-protocol/message-parsers";
+import { MakeValueTypeParserOptions, ValueType } from "../pg-protocol";
+import * as stream from "../stream";
+import { Duplex } from "stream";
 import {
   read,
   write,
@@ -10,66 +10,64 @@ import {
   transformRowDescription,
   transformDataRow,
   PgServerError,
-} from './util';
+} from "./util";
 import {
   hasTypeOf,
   ReadableError,
   ParseMessageError,
   NoMoreMessagesError,
-} from '../stream/readable';
-import { WritableError } from '../stream/writable';
+} from "../stream/readable";
+import { WritableError } from "../stream/writable";
 
 export const queryStreamRaw =
   (socket: Duplex) =>
   <O extends MakeValueTypeParserOptions>(
     sql: string,
-    parserOptions?: O
+    parserOptions?: O,
   ): Stream.Stream<
-    never,
+    [Record<string, ValueType<O>>, number],
     | ReadableError
     | WritableError
     | ParseMessageError
     | NoMoreMessagesError
     | PgServerError
-    | PgParseError,
-    [Record<string, ValueType<O>>, number]
+    | PgParseError
   > => {
     type State = {
       decode?: (row: DataRow) => Record<string, ValueType<O>>;
       offset: number;
     };
-    return Stream.fromEffect(write(socket)({ type: 'Query', sql })).pipe(
+    return Stream.fromEffect(write(socket)({ type: "Query", sql })).pipe(
       Stream.flatMap(() =>
         stream
           .readStream(read(socket), () => false)
           .pipe(
-            Stream.takeUntil(hasTypeOf('ReadyForQuery')),
+            Stream.takeUntil(hasTypeOf("ReadyForQuery")),
             Stream.tap((_) =>
-              _.type === 'CommandComplete'
+              _.type === "CommandComplete"
                 ? Effect.log(_.commandTag)
-                : Effect.unit
+                : Effect.unit,
             ),
-            Stream.filter(hasTypeOf('RowDescription', 'DataRow')),
+            Stream.filter(hasTypeOf("RowDescription", "DataRow")),
             Stream.zipWithIndex,
             Stream.mapAccumEffect(
               { offset: 0 } as State,
               (
                 state,
-                [msg, index]
+                [msg, index],
               ): Effect.Effect<
-                never,
-                PgParseError,
                 readonly [
                   State,
-                  readonly [Record<string, ValueType<O>>, number] | undefined
-                ]
+                  readonly [Record<string, ValueType<O>>, number] | undefined,
+                ],
+                PgParseError
               > => {
-                if (msg.type === 'DataRow') {
+                if (msg.type === "DataRow") {
                   if (!state.decode) {
                     return Effect.fail(
                       new PgParseError({
-                        message: 'data row before row description',
-                      })
+                        message: "data row before row description",
+                      }),
                     );
                   }
 
@@ -88,12 +86,12 @@ export const queryStreamRaw =
                   { decode, offset: index + 1 },
                   undefined,
                 ]);
-              }
+              },
             ),
             Stream.filter(
-              (_): _ is [Record<string, ValueType<O>>, number] => !!_
-            )
-          )
-      )
+              (_): _ is [Record<string, ValueType<O>>, number] => !!_,
+            ),
+          ),
+      ),
     );
   };
