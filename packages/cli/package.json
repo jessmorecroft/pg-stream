@@ -1,0 +1,13 @@
+{
+  "name": "@jmorecroft67/pg-stream-cli",
+  "version": "1.0.0",
+  "bin": "./src/index.js",
+  "dependencies": {
+    "@effect/cli": "^0.35.24",
+    "@effect/platform-node": "^0.45.24",
+    "@effect/printer": "^0.32.0",
+    "@effect/printer-ansi": "^0.32.24",
+    "effect": "^2.4.15",
+    "tslib": "^2.6.2"
+  }
+}

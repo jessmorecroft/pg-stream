@@ -18,11 +18,11 @@ type SchemaTypesUnion<A extends [...Schema.Schema<any, any, any>[]]> =
 
 export const queryStream =
   (socket: Duplex) =>
-  <S extends [...Schema.Schema<any, any, any>[]]>(
+  <S extends Schema.Schema<any, any, any>[]>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions?: MakeValueTypeParserOptions },
-    ...schemas: S
+    ...schemas: [...S]
   ): Stream.Stream<
     readonly [SchemaTypesUnion<S>, number],
     | ReadableError

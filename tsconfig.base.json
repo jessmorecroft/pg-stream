@@ -17,6 +17,7 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
+      "@jmorecroft67/pg-stream-cli": ["packages/cli/src/index.ts"],
       "@jmorecroft67/pg-stream-core": ["packages/core/src/index.ts"]
     }
   },

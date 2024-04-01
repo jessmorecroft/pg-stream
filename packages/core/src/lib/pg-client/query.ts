@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Context, Effect } from "effect";
+import { Effect } from "effect";
 import { MakeValueTypeParserOptions } from "../pg-protocol";
 import {
   NoMoreMessagesError,
@@ -22,11 +22,11 @@ type NoneOneOrMany<T extends [...any]> = T extends [infer A]
 
 export const query =
   (socket: Duplex) =>
-  <S extends [...Schema.Schema<any, any, any>[]]>(
+  <S extends Schema.Schema<any, any, any>[]>(
     sqlOrOptions:
       | string
       | { sql: string; parserOptions: MakeValueTypeParserOptions },
-    ...schemas: S
+    ...schemas: [...S]
   ): Effect.Effect<
     NoneOneOrMany<SchemaTypes<S>>,
     | ReadableError

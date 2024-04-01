@@ -26,6 +26,7 @@ import {
   ParseMessageGroupError,
   ReadableError,
   WritableError,
+  UnexpectedMessageError,
   hasTypeOf,
 } from "../stream";
 import { Duplex } from "stream";
@@ -77,7 +78,7 @@ export const recvlogical =
     | ParseMessageGroupError
     | NoMoreMessagesError
     | PgServerError
-    | stream.UnexpectedMessageError
+    | UnexpectedMessageError
     | TableInfoNotFoundError
     | NoTransactionContextError
     | XLogProcessorError<E>

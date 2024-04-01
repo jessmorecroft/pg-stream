@@ -10,7 +10,6 @@
     "directory": "../../dist/packages/core"
   },
   "peerDependencies": {
-    "@effect/cli": "^0.35.24",
     "@effect/platform": "^0.48.22",
     "@effect/platform-node": "^0.45.24",
     "@effect/schema": "^0.64.16",
