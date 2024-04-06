@@ -8,9 +8,11 @@ import {
   Option,
   Sink,
   Stream,
+  flow,
+  identity,
   pipe,
-} from "effect";
-import * as P from "parser-ts/Parser";
+} from 'effect';
+import * as P from 'parser-ts/Parser';
 import {
   ALL_ENABLED_PARSER_OPTIONS,
   CopyData,
@@ -19,7 +21,7 @@ import {
   XKeepAlive,
   XLogData,
   makePgClientMessage,
-} from "../pg-protocol";
+} from '../pg-protocol';
 import {
   NoMoreMessagesError,
   ParseMessageError,
@@ -28,8 +30,8 @@ import {
   WritableError,
   UnexpectedMessageError,
   hasTypeOf,
-} from "../stream";
-import { Duplex } from "stream";
+} from '../stream';
+import { Duplex } from 'stream';
 import {
   XLogProcessor,
   XLogProcessorError,
@@ -41,8 +43,8 @@ import {
   readUntilReady,
   write,
   PgServerError,
-} from "./util";
-import * as Schema from "@effect/schema/Schema";
+} from './util';
+import * as Schema from '@effect/schema/Schema';
 import {
   DecoratedBegin,
   NoTransactionContextError,
@@ -50,11 +52,11 @@ import {
   TableInfoMap,
   TableInfoNotFoundError,
   transformLogData,
-} from "./transform-log-data";
-import * as stream from "../stream";
-import { walLsnFromString } from "../util/schemas";
+} from './transform-log-data';
+import * as stream from '../stream';
+import { walLsnFromString } from '../util/schemas';
 
-const isCopyData = hasTypeOf("CopyData");
+const isCopyData = hasTypeOf('CopyData');
 
 export const recvlogical =
   (socket: Duplex) =>
@@ -86,39 +88,39 @@ export const recvlogical =
     Effect.gen(function* (_) {
       yield* _(
         write(socket)({
-          type: "Query",
+          type: 'Query',
           sql: `START_REPLICATION SLOT ${slotName} LOGICAL ${Schema.encodeSync(
             walLsnFromString,
           )(0n)} (proto_version '1', publication_names '${publicationNames.join(
-            ",",
+            ',',
           )}')`,
         }),
       );
 
       // wait for this before streaming
-      yield* _(readOrFail(socket)("CopyBothResponse"));
+      yield* _(readOrFail(socket)('CopyBothResponse'));
 
       const processedLsns: [bigint, boolean][] = [];
 
       const [logData, keepalives] = yield* _(
         stream
-          .readStream(read(socket), (e) => e._tag === "NoMoreMessagesError")
+          .readStream(read(socket), (e) => e._tag === 'NoMoreMessagesError')
           .pipe(
-            Stream.takeUntil((_) => _.type === "CopyDone"),
+            Stream.takeUntil((_) => _.type === 'CopyDone'),
             Stream.filter(isCopyData),
             Stream.tap((msg) => {
               if (
-                msg.payload.type === "XLogData" &&
+                msg.payload.type === 'XLogData' &&
                 msg.payload.walEnd !== 0n
               ) {
                 processedLsns.push([msg.payload.walEnd, false]);
-              } else if (msg.payload.type === "XKeepAlive") {
+              } else if (msg.payload.type === 'XKeepAlive') {
                 processedLsns.push([msg.payload.walEnd, true]);
               }
               return Effect.unit;
             }),
             Stream.partitionEither(({ payload }) => {
-              return hasTypeOf("XLogData")(payload)
+              return hasTypeOf('XLogData')(payload)
                 ? Effect.succeed(Either.left(payload))
                 : Effect.succeed(Either.right(payload));
             }),
@@ -145,9 +147,9 @@ export const recvlogical =
                   ] => [
                     [
                       map,
-                      msg.type === "Begin"
+                      msg.type === 'Begin'
                         ? msg
-                        : msg.type !== "Commit"
+                        : msg.type !== 'Commit'
                           ? begin
                           : undefined,
                     ],
@@ -168,18 +170,25 @@ export const recvlogical =
       );
 
       const dataStream = filtered.pipe(
-        Stream.bufferChunks({ capacity: 16 }),
+        processor.endOfChunk
+          ? flow(
+              Stream.transduce(
+                Sink.collectAllUntil(([msg]) => !!processor.endOfChunk?.(msg)),
+              ),
+              Stream.flattenChunks,
+            )
+          : identity,
         Stream.groupByKey(([msg]) => {
           if (processor.key) {
-            if (processor.key === "serial") {
-              return "";
+            if (processor.key === 'serial') {
+              return '';
             }
-            if (processor.key === "table") {
-              return "namespace" in msg ? `${msg.namespace}.${msg.name}` : "";
+            if (processor.key === 'table') {
+              return 'namespace' in msg ? `${msg.namespace}.${msg.name}` : '';
             }
             return processor.key(msg);
           }
-          return "";
+          return '';
         }),
         GroupBy.evaluate((key, stream) =>
           stream.pipe(
@@ -211,13 +220,13 @@ export const recvlogical =
 
       const ticks = keepalives.pipe(
         Stream.filter(
-          (msg): msg is XKeepAlive => msg.type === "XKeepAlive" && msg.replyNow,
+          (msg): msg is XKeepAlive => msg.type === 'XKeepAlive' && msg.replyNow,
         ),
-        Stream.merge(Stream.tick("10 seconds")),
+        Stream.merge(Stream.tick('10 seconds')),
       );
 
       const source = Stream.merge(dataStream, ticks, {
-        haltStrategy: "left",
+        haltStrategy: 'left',
       }).pipe(
         Stream.flatMap((keepalive) => {
           let next: bigint | undefined;
@@ -242,9 +251,9 @@ export const recvlogical =
             BigInt(new Date().getTime() - Date.UTC(2000, 0, 1)) * 1000n;
 
           return {
-            type: "CopyData",
+            type: 'CopyData',
             payload: {
-              type: "XStatusUpdate",
+              type: 'XStatusUpdate',
               lastWalWrite: lsn,
               lastWalFlush: lsn,
               lastWalApply: 0n,
@@ -266,7 +275,7 @@ export const recvlogical =
 
         const [head, tail] = Chunk.splitWhere(
           chunk,
-          (_) => _.type === "CopyDone",
+          (_) => _.type === 'CopyDone',
         );
 
         if (Chunk.isNonEmpty(tail)) {
@@ -292,14 +301,20 @@ export const recvlogical =
 
       const writeSink = Sink.fromPush(Effect.succeed(push));
 
+      Stream.splitOnChunk;
       yield* _(
         Stream.run(
           Stream.merge(
             source,
             Stream.fromEffect(
-              (signal ? Deferred.await(signal) : Effect.never).pipe(
-                Effect.map((): CopyDone => ({ type: "CopyDone" })),
-              ),
+              (signal
+                ? Deferred.await(signal).pipe(
+                    Effect.tap(() =>
+                      Effect.logInfo('shutting down logical stream'),
+                    ),
+                  )
+                : Effect.never
+              ).pipe(Effect.map((): CopyDone => ({ type: 'CopyDone' }))),
             ),
           ),
           Sink.flatMap(writeSink, () => Sink.drain),
@@ -318,7 +333,7 @@ export const recvlogical =
                 P.filter(isCommandComplete),
                 P.map(({ commandTag }) => commandTag),
                 P.many,
-                P.bindTo("commandTags"),
+                P.bindTo('commandTags'),
                 P.chainFirst(() =>
                   pipe(
                     item,

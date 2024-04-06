@@ -4,21 +4,21 @@ import {
   DecoratedUpdate,
   PgOutputDecoratedMessageTypes,
   makePgPool,
-} from "../index";
-import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from "effect";
+} from '../index';
+import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from 'effect';
 
 const program = Effect.gen(function* (_) {
   const pgPool = yield* _(
     makePgPool({
-      host: "localhost",
+      host: 'localhost',
       port: 5432,
       useSSL: true,
-      database: "postgres",
-      username: "postgres",
-      password: "topsecret",
+      database: 'postgres',
+      username: 'postgres',
+      password: 'topsecret',
       min: 1,
       max: 10,
-      timeToLive: "1 minutes",
+      timeToLive: '1 minutes',
       replication: true,
     }),
   );
@@ -30,7 +30,7 @@ const program = Effect.gen(function* (_) {
 
   yield* _(
     pg1.queryRaw(
-      "CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT",
+      'CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT',
     ),
   );
 
@@ -46,16 +46,16 @@ const program = Effect.gen(function* (_) {
   const changes = yield* _(
     Effect.zipRight(
       pg1.recvlogical({
-        slotName: "example_slot",
-        publicationNames: ["example_publication"],
+        slotName: 'example_slot',
+        publicationNames: ['example_publication'],
         processor: {
           filter: (
             msg: PgOutputDecoratedMessageTypes,
           ): msg is InsertOrUpdateOrDelete =>
-            msg.type === "Insert" ||
-            msg.type === "Update" ||
-            msg.type === "Delete",
-          key: "table",
+            msg.type === 'Insert' ||
+            msg.type === 'Update' ||
+            msg.type === 'Delete',
+          key: 'table',
           process: (key, data) =>
             queue.offerAll(Chunk.map(data, (_) => [key, _])),
         },
@@ -77,7 +77,7 @@ const program = Effect.gen(function* (_) {
           Effect.flatMap(() =>
             Stream.fromQueue(queue).pipe(
               Stream.map(([key, data]) => ({ ...data, key })),
-              Stream.takeUntil((msg) => msg.type === "Delete"),
+              Stream.takeUntil((msg) => msg.type === 'Delete'),
               Stream.runCollect,
             ),
           ),
@@ -94,11 +94,11 @@ const program = Effect.gen(function* (_) {
   yield* _(
     Console.table(
       changesArray,
-      Object.keys(changesArray.find(({ type }) => type === "Update") ?? []),
+      Object.keys(changesArray.find(({ type }) => type === 'Update') ?? []),
     ),
   );
 
-  yield* _(pg1.query("DROP PUBLICATION example_publication"));
+  yield* _(pg1.query('DROP PUBLICATION example_publication'));
 });
 
 Effect.runPromise(
