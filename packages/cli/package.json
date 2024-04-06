@@ -1,6 +1,6 @@
 {
   "name": "@jmorecroft67/pg-stream-cli",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "bin": {
     "pg-stream": "./src/index.js"
   },
@@ -12,10 +12,15 @@
   },
   "dependencies": {
     "@effect/cli": "0.35.24",
-    "@effect/platform-node": "0.45.24",
-    "@effect/printer": "0.32.0",
-    "@effect/printer-ansi": "0.32.24",
-    "effect": "2.4.15",
-    "tslib": "2.6.2"
+    "@effect/platform": "^0.48.22",
+    "@effect/platform-node": "^0.45.24",
+    "@effect/schema": "^0.64.16",
+    "effect": "^2.4.15",
+    "tslib": "2.6.2",
+    "decimal.js": "^10.4.3",
+    "fp-ts": "^2.16.5",
+    "io-ts": "^2.2.21",
+    "lodash": "^4.17.21",
+    "parser-ts": "^0.7.0"
   }
 }
