@@ -16,7 +16,7 @@
     "changeset:add": "changeset",
     "changeset:version": "changeset version",
     "prepublishOnly": "npm run build && npm run test",
-    "publish": "changeset publish"
+    "publish": "npm run prepublishOnly && changeset publish"
   },
   "private": true,
   "workspaces": {
