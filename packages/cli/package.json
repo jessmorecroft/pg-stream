@@ -4,6 +4,10 @@
   "bin": {
     "pg-stream": "./src/index.js"
   },
+  "repository": {
+    "url": "https://github.com/jessmorecroft/pg-stream",
+    "type": "github"
+  },
   "publishConfig": {
     "directory": "../../dist/packages/cli"
   },
