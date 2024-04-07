@@ -21,6 +21,7 @@ import {
 } from '@jmorecroft67/pg-stream-core';
 import { isValidationError } from '@effect/cli/ValidationError';
 import { defaultTeardown } from '@effect/platform/Runtime';
+import packageJson from '../../package.json';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (BigInt.prototype as any)['toJSON'] = function () {
@@ -91,7 +92,9 @@ type CommonOptions = Types.Simplify<
   Command.Command.ParseConfig<typeof commonOptions>
 >;
 
-const pgStream = Command.make('pg-stream', commonOptions);
+const pgStreamBinaryName = Object.keys(packageJson.bin)[0];
+
+const pgStream = Command.make(pgStreamBinaryName, commonOptions);
 
 const makePgClientWithTimeout = (
   options: CommonOptions & { replication?: boolean },
@@ -123,7 +126,7 @@ const JSON_FRIENDLY_PARSER_OPTIONS = {
 // query
 
 const sqlOption = Options.text('command').pipe(
-  Options.withDescription('run some SQL and print the results'),
+  Options.withDescription('SQL to run'),
   Options.withAlias('c'),
 );
 
@@ -151,12 +154,20 @@ const queryCommand = Command.make(
             if (options.output === 'table') {
               yield* _(Console.table(result, Object.keys(result[0])));
             } else {
-              yield* _(Console.log(JSON.stringify(result, null, 2)));
+              yield* _(Console.log(JSON.stringify(result)));
             }
           }
         }
       }).pipe(Effect.scoped, setLoggingAndConfig(options)),
     ),
+).pipe(
+  Command.withDescription(
+    'Runs some SQL and prints the results. The SQL may be a single statement or a sequence of statements. ' +
+      'When the SQL contains more than one SQL statement (separated by semicolons), those statements are ' +
+      'executed as a single transaction, unless explicit transaction control commands are included to force ' +
+      'a different behavior. Each result set will be printed separately, either in tabular form or as a ' +
+      'single line of JSON, depending on the "output" selected.',
+  ),
 );
 
 // recvlogical
@@ -260,10 +271,16 @@ const recvlogicalCommand = Command.make(
         const onSigInt = Effect.async<void>((emit) => {
           process.once('SIGINT', () => emit(Effect.unit));
         });
+        const onSigTerm = Effect.async<void>((emit) => {
+          process.once('SIGTERM', () => emit(Effect.unit));
+        });
 
         const signal = yield* _(Deferred.make<void>());
 
-        yield* _(Deferred.completeWith(signal, onSigInt), Effect.forkScoped);
+        yield* _(
+          Deferred.completeWith(signal, Effect.race(onSigInt, onSigTerm)),
+          Effect.forkScoped,
+        );
 
         yield* _(
           pg.recvlogical({
@@ -299,6 +316,14 @@ const recvlogicalCommand = Command.make(
         );
       }).pipe(Effect.scoped, setLoggingAndConfig(options)),
     ),
+).pipe(
+  Command.withDescription(
+    'Starts a logical replication stream from the server and prints the events as they are received. Each ' +
+      'batch of events associated with a single transaction is printed separately, either in tabular form or ' +
+      'as a single line of JSON, depending on the "output" selected. The slot and publication may be optionally ' +
+      'created on demand, and may optionally be designated "tempoary", in which case they will be removed on ' +
+      'exit. The SIGINT (CTRL-C) or SIGTERM signals should be used to shut down the app.',
+  ),
 );
 
 const run = pgStream.pipe(
@@ -307,13 +332,13 @@ const run = pgStream.pipe(
   ),
   Command.withSubcommands([queryCommand, recvlogicalCommand]),
   Command.run({
-    name: 'pg-stream',
-    version: '2.0.0',
+    name: pgStreamBinaryName,
+    version: packageJson.version,
   }),
 );
 
-export const cli = (argv: string[]) => {
-  const program = Effect.suspend(() => run(argv)).pipe(
+export const cli = (argv: string[]) =>
+  Effect.suspend(() => run(argv)).pipe(
     Effect.tapErrorCause((e) =>
       Cause.isFailType(e) && isValidationError(e.error)
         ? Effect.unit
@@ -321,6 +346,10 @@ export const cli = (argv: string[]) => {
     ),
     Effect.provide(NodeContext.layer),
   );
+
+export const runMain = (argv: string[]) => {
+  const program = cli(argv);
+
   const fiber = Effect.runFork(program);
   fiber.addObserver((exit) => {
     defaultTeardown(exit, (code) => {

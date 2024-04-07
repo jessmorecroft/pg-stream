@@ -21,19 +21,23 @@ The querying methods send one or more SQL statements to the Postgres server for 
 queryRaw(
   sql: string,
   parserOptions?: O
-): Effect.Effect<never, PgClientError, Record<string, ValueType<O>>[][]>
+): Effect.Effect<
+  Record<string, ValueType<O>>[][], PgClientError>
 
 // Execute SQL, return any results as a list of parsed result sets that
 // are each then validated/parsed by the supplied schema. Note each schema
 // validates a result set, so allows you to potentially constrain the number
 // of records for example.
-<S extends Schema.Schema<any, any>>
+<S extends Schema.Schema<any, any, any>>
 queryMany(
   sqlOrOptions:
     | string
     | { sql: string; parserOptions: MakeValueTypeParserOptions },
   schema: S
-): Effect.Effect<never, PgClientError, readonly Schema.Schema.To<S>[]>
+): Effect.Effect<
+  readonly Schema.Schema.Type<S>[],
+  PgClientError,
+  Schema.Schema.Context<S>>
 
 // Execute SQL, return any results as a tuple of parsed result sets that are
 // validated/parsed by the supplied schemas. If no schema, no result sets are
@@ -42,13 +46,16 @@ queryMany(
 // returned, each validated by the corresponding schema in order of receipt.
 // Note each schema validates a result set, so allows you to potentially
 // constrain the number of records for example.
-<S extends [...Schema.Schema<any, any>[]]>
+<S extends Schema.Schema<any, any, any>[]>
 query(
   sqlOrOptions:
     | string
     | { sql: string; parserOptions: MakeValueTypeParserOptions },
-  ...schemas: S
-): Effect.Effect<never, PgClientError, NoneOneOrMany<SchemaTypes<S>>>
+  ...schemas: [...S]
+): Effect.Effect<
+  NoneOneOrMany<SchemaTypes<S>>,
+  PgClientError,
+  Schema.Schema.Context<S[number]>>
 
 // Execute SQL, return results as a stream of parsed results where each element
 // is a row/ index tuple, such that multiple result sets will be returned in
@@ -58,7 +65,7 @@ query(
 queryStreamRaw(
   sql: string,
   parserOptions?: O
-): Stream.Stream<never, PgClientError, [Record<string, ValueType<O>>, number]>
+): Stream.Stream<[Record<string, ValueType<O>>, number], PgClientError>
 
 // Execute SQL, return results as a stream of parsed and validated results where
 // each element is a row/ index tuple, such that multiple result sets will be
@@ -67,13 +74,16 @@ queryStreamRaw(
 // validated by the corresponding schema in order of receipt. Note each schema
 // must define a result set record, which is unlike query or queryMany, which
 // expect each schema to define a result set.
-<S extends [...Schema.Schema<any, any>[]]>
+<S extends Schema.Schema<any, any, any>[]>
 queryStream(
   sqlOrOptions:
     | string
     | { sql: string; parserOptions?: MakeValueTypeParserOptions },
-  ...schemas: S
-): Stream.Stream<never, PgClientError, readonly [SchemaTypesUnion<S>, number]>
+  ...schemas: [...S]
+): Stream.Stream<
+  readonly [SchemaTypesUnion<S>, number],
+  PgClientError,
+  Schema.Schema.Context<S[number]>>
 
 ```
 
@@ -87,7 +97,7 @@ queryStream(
 Here's how to query when you don't expect a result.
 
 ```typescript
-yield * _(pg.query("CREATE TABLE my_table (id SERIAL, message VARCHAR)"));
+yield * _(pg.query('CREATE TABLE my_table (id SERIAL, message VARCHAR)'));
 ```
 
 #### Single result set
@@ -145,13 +155,13 @@ UPDATE balance SET amount = amount + ${payment} WHERE account_id = 'B' RETURNING
 `,
       Schema.tuple(
         Schema.struct({
-          account_id: Schema.literal("A"),
+          account_id: Schema.literal('A'),
           amount: DecimalFromSelf,
         }),
       ),
       Schema.tuple(
         Schema.struct({
-          account_id: Schema.literal("B"),
+          account_id: Schema.literal('B'),
           amount: DecimalFromSelf,
         }),
       ),
@@ -213,15 +223,15 @@ SELECT * FROM cat;
 SELECT * FROM hamster;
 `,
   Schema.struct({
-    kind: Schema.literal("dog"),
-    bark: Schema.literal("woof", "arf", "bowowow"),
+    kind: Schema.literal('dog'),
+    bark: Schema.literal('woof', 'arf', 'bowowow'),
   }),
   Schema.struct({
-    kind: Schema.literal("cat"),
+    kind: Schema.literal('cat'),
     lives: Schema.int()(Schema.number),
   }),
   Schema.struct({
-    kind: Schema.literal("hamster"),
+    kind: Schema.literal('hamster'),
     wheel_rpm: Schema.int()(Schema.number),
   }),
 );
@@ -244,20 +254,33 @@ The logical replication capability of this library, provided by the single `recv
 ```typescript
 // You must implement this to process transaction logs.
 export interface XLogProcessor<E, T extends PgOutputDecoratedMessageTypes> {
-  // Custom partition key, or "serial" - everything in serial, or "table" -
-  // unique partition key per table.
-  key?: ((msg: T) => string) | 'serial' | 'table';
+  // Filter the messages you are interested in.
   filter(msg: PgOutputDecoratedMessageTypes): msg is T;
-  process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<never, E, void>;
+  // Key generator may be one of:
+  // - "serial" - everything in serial (default)
+  // - "table" - partition key per table
+  // - Custom partition key - some record property for example, like a customer
+  //                          identifier
+  key?: ((msg: T) => string) | 'serial' | 'table';
+  // End of chunk allows a client to specify how events should be chunked/
+  // grouped by specifying the last message in every chunk. For example, to
+  // chunk in transaction batches this could return true when the message
+  // is a commit message. The resultant chunk items are then grouped by key and
+  // each group is sent to the process method.
+  endOfChunk?: (msg: T) => boolean;
+  // Process a chunk of messages grouped by key and optionally chunked according
+  // to the endOfChunk method.
+  process(key: string, chunk: Chunk.Chunk<T>): Effect.Effect<void, E>;
 }
 
 // The `recvlogical` method starts a logical replication stream from the server
 // and feeds transaction log updates to a user supplied processor. The processor
-// may optionally specify concurrency constraints and filtering. The replication
-// stream will only supply the processor as fast as it is able to process data,
-// or more specifically, back pressure is applied to the server at the socket
-// level. The transaction log checkpoint is updated at the Postgres server when
-// the processor has processed all logs up to and including that point.
+// may optionally specify concurrency constraints, filtering and an "end of
+// chunk" marker. The replication stream will only supply the processor as fast
+// as it is able to process data, or more specifically, back pressure is applied
+// to the server at the socket level. The transaction log checkpoint is updated
+// at the Postgres server when the processor has processed all logs up to and
+// including that point.
 <E, T extends PgOutputDecoratedMessageTypes>
 recvlogical({
   slotName,
@@ -268,20 +291,28 @@ recvlogical({
   slotName: string;
   publicationNames: string[];
   processor: XLogProcessor<E, T>;
-  signal?: Deferred.Deferred<never, void>;
-}): Effect.Effect<never, PgClientError | XLogProcessorError<E>, void>
+  signal?: Deferred.Deferred<void>;
+}): Effect.Effect<void, PgClientError | XLogProcessorError<E>>
 ```
 
 - `options`:
   - `slotName`: The name of the replication slot.
   - `publicationNames`: The names of the publications being subscribed to.
-  - `processor`: A processor for the handling of streamed records, along with an optional partition key strategy (to constrain concurrency) and optional record filtering. If no partition key strategy is defined, we default to processing updates serially.
+  - `processor`: A processor for the handling of streamed records, along with an optional partition key strategy (to constrain concurrency), optional record filtering and an optional "end of chunk" predicate. If no partition key strategy
+    is defined, we default to processing updates serially. If no "end of chunk"
+    predicate is defined then chunking behaviour is undefined.
   - `signal`: A optional signal for stopping the replication stream, which then allows continued use of the connection for further queries or streaming.
 
 #### Example
 
 ```typescript
-import { DecoratedDelete, DecoratedInsert, DecoratedUpdate, PgOutputDecoratedMessageTypes, makePgPool } from "@jmorecroft67/pg-stream-core";
+import {
+  DecoratedDelete,
+  DecoratedInsert,
+  DecoratedUpdate,
+  PgOutputDecoratedMessageTypes,
+  makePgPool,
+} from "@jmorecroft67/pg-stream-core";
 import { Chunk, Console, Deferred, Effect, Exit, Queue, Stream } from "effect";
 
 const program = Effect.gen(function* (_) {
@@ -289,7 +320,7 @@ const program = Effect.gen(function* (_) {
     makePgPool({
       host: "localhost",
       port: 5432,
-      useSSL: true,
+      useSSL: false,
       database: "postgres",
       username: "postgres",
       password: "topsecret",
@@ -297,22 +328,38 @@ const program = Effect.gen(function* (_) {
       max: 10,
       timeToLive: "1 minutes",
       replication: true,
-    }),
+    })
   );
 
-  const pg1 = yield* _(pgPool.get());
-  const pg2 = yield* _(pgPool.get());
+  const pg1 = yield* _(pgPool.get);
+  const pg2 = yield* _(pgPool.get);
 
   // Create a publication and a temporary slot for test purposes. In a
   // production scenario, assuming you wanted to ensure you don't miss
   // events, you would use a permanent slot and would probably do this
   // one-time setup independent of your streaming code.
 
-  yield* _(pg1.query("CREATE PUBLICATION example_publication FOR ALL TABLES"));
+  // note unlike slots we're not able to create a temporary publication
+  // in postgres, so we explicitly drop the publication after we're done,
+  // at end of this scope.
+  yield* _(
+    Effect.acquireRelease(
+      pg1.queryRaw(`CREATE PUBLICATION example_publication FOR ALL TABLES`),
+      () =>
+        pg1.queryRaw(`DROP PUBLICATION example_publication`).pipe(Effect.ignore)
+    )
+  );
 
-  yield* _(pg1.queryRaw("CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT"));
+  yield* _(
+    pg1.queryRaw(
+      "CREATE_REPLICATION_SLOT example_slot TEMPORARY LOGICAL pgoutput NOEXPORT_SNAPSHOT"
+    )
+  );
 
-  type InsertOrUpdateOrDelete = DecoratedInsert | DecoratedUpdate | DecoratedDelete;
+  type InsertOrUpdateOrDelete =
+    | DecoratedInsert
+    | DecoratedUpdate
+    | DecoratedDelete;
 
   // Bounded queue, which means pushing to this queue will be blocked
   // by a slow consumer, which in turn means that our consumption of
@@ -322,7 +369,7 @@ const program = Effect.gen(function* (_) {
 
   const queue = yield* _(Queue.bounded<[string, InsertOrUpdateOrDelete]>(16));
 
-  const signal = yield* _(Deferred.make<never, void>());
+  const signal = yield* _(Deferred.make<void>());
 
   const changes = yield* _(
     Effect.zipRight(
@@ -330,9 +377,15 @@ const program = Effect.gen(function* (_) {
         slotName: "example_slot",
         publicationNames: ["example_publication"],
         processor: {
-          filter: (msg: PgOutputDecoratedMessageTypes): msg is InsertOrUpdateOrDelete => msg.type === "Insert" || msg.type === "Update" || msg.type === "Delete",
+          filter: (
+            msg: PgOutputDecoratedMessageTypes
+          ): msg is InsertOrUpdateOrDelete =>
+            msg.type === "Insert" ||
+            msg.type === "Update" ||
+            msg.type === "Delete",
           key: "table",
-          process: (key, data) => queue.offerAll(Chunk.map(data, (_) => [key, _])),
+          process: (key, data) =>
+            queue.offerAll(Chunk.map(data, (_) => [key, _])),
         },
         signal,
       }),
@@ -347,58 +400,62 @@ const program = Effect.gen(function* (_) {
     WHERE id = 1;
   DELETE FROM example
     WHERE id = 2;
-  DROP TABLE example;`,
+  DROP TABLE example;`
         )
         .pipe(
           Effect.flatMap(() =>
             Stream.fromQueue(queue).pipe(
               Stream.map(([key, data]) => ({ ...data, key })),
               Stream.takeUntil((msg) => msg.type === "Delete"),
-              Stream.runCollect,
-            ),
+              Stream.runCollect
+            )
           ),
           // All done - tell recvlogical to unsubscribe.
-          Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined))),
+          Effect.tap(() => Deferred.done(signal, Exit.succeed(undefined)))
         ),
       {
         concurrent: true,
-      },
-    ),
+      }
+    )
   );
 
-  yield* _(Console.table(Chunk.toReadonlyArray(changes), ["type", "key", "oldRecord", "newRecord"]));
-
-  // Cleanup our test publication.
-  yield* _(pg1.query("DROP PUBLICATION example_publication"));
+  yield* _(
+    Console.table(Chunk.toReadonlyArray(changes), [
+      "type",
+      "key",
+      "oldRecord",
+      "newRecord",
+    ])
+  );
 });
 
-Effect.runPromise(program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal)));
+Effect.runPromise(
+  program.pipe(Effect.scoped, Effect.catchAllDefect(Effect.logFatal))
+);
 ```
 
 The output of this running against a test postgres docker container with self-signed certficate is:
 
 ```
-(node:52727) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
-(Use `node --trace-warnings ...` to show where the warning was created)
-timestamp=2023-10-31T04:39:45.983Z level=INFO fiber=#0 message="CREATE PUBLICATION"
-timestamp=2023-10-31T04:39:45.996Z level=INFO fiber=#0 message=CREATE_REPLICATION_SLOT
-timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="CREATE TABLE"
-timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="INSERT 0 2"
-timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="ALTER TABLE"
-timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="UPDATE 1"
-timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="DELETE 1"
-timestamp=2023-10-31T04:39:46.021Z level=INFO fiber=#86 message="DROP TABLE"
-timestamp=2023-10-31T04:39:46.055Z level=INFO fiber=#85 message="COPY 0"
-timestamp=2023-10-31T04:39:46.055Z level=INFO fiber=#85 message=START_REPLICATION
+timestamp=2024-04-07T04:04:55.787Z level=INFO fiber=#0 message="CREATE PUBLICATION"
+timestamp=2024-04-07T04:04:55.800Z level=INFO fiber=#0 message=CREATE_REPLICATION_SLOT
+timestamp=2024-04-07T04:04:55.820Z level=INFO fiber=#67 message="CREATE TABLE"
+timestamp=2024-04-07T04:04:55.820Z level=INFO fiber=#67 message="INSERT 0 2"
+timestamp=2024-04-07T04:04:55.820Z level=INFO fiber=#67 message="ALTER TABLE"
+timestamp=2024-04-07T04:04:55.820Z level=INFO fiber=#67 message="UPDATE 1"
+timestamp=2024-04-07T04:04:55.820Z level=INFO fiber=#67 message="DELETE 1"
+timestamp=2024-04-07T04:04:55.821Z level=INFO fiber=#67 message="DROP TABLE"
+timestamp=2024-04-07T04:04:55.842Z level=INFO fiber=#66 message="COPY 0"
+timestamp=2024-04-07T04:04:55.842Z level=INFO fiber=#66 message=START_REPLICATION
 ┌─────────┬──────────┬──────────────────┬─────────────────────────────┬───────────────────────────────┐
-│ (index) │   type   │       key        │          oldRecord          │           newRecord           │
+│ (index) │ type     │ key              │ oldRecord                   │ newRecord                     │
 ├─────────┼──────────┼──────────────────┼─────────────────────────────┼───────────────────────────────┤
-│    0    │ 'Insert' │ 'public.example' │                             │  { id: 1, message: 'hello' }  │
-│    1    │ 'Insert' │ 'public.example' │                             │  { id: 2, message: 'world' }  │
-│    2    │ 'Update' │ 'public.example' │ { id: 1, message: 'hello' } │ { id: 1, message: 'goodbye' } │
-│    3    │ 'Delete' │ 'public.example' │ { id: 2, message: 'world' } │                               │
+│ 0       │ 'Insert' │ 'public.example' │                             │ { id: 1, message: 'hello' }   │
+│ 1       │ 'Insert' │ 'public.example' │                             │ { id: 2, message: 'world' }   │
+│ 2       │ 'Update' │ 'public.example' │ { id: 1, message: 'hello' } │ { id: 1, message: 'goodbye' } │
+│ 3       │ 'Delete' │ 'public.example' │ { id: 2, message: 'world' } │                               │
 └─────────┴──────────┴──────────────────┴─────────────────────────────┴───────────────────────────────┘
-timestamp=2023-10-31T04:39:46.062Z level=INFO fiber=#0 message="DROP PUBLICATION"
+timestamp=2024-04-07T04:04:55.852Z level=INFO fiber=#0 message="DROP PUBLICATION"
 ```
 
 ### earlier versions

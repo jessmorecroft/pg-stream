@@ -1,5 +1,5 @@
 #!/usr/bin/env node
 
-import { cli } from './lib/cli'
+import { runMain } from './lib/cli';
 
-cli(process.argv);
+runMain(process.argv);

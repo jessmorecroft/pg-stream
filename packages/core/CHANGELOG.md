@@ -1,5 +1,11 @@
 # @jmorecroft67/pg-stream-core
 
+## 2.4.0
+
+### Minor Changes
+
+- improved logical replication hooks with ability to specify chunk delimeters
+
 ## 2.3.1
 
 ### Patch Changes

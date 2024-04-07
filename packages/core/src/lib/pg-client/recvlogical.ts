@@ -301,7 +301,6 @@ export const recvlogical =
 
       const writeSink = Sink.fromPush(Effect.succeed(push));
 
-      Stream.splitOnChunk;
       yield* _(
         Stream.run(
           Stream.merge(

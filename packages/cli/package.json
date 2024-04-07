@@ -1,6 +1,6 @@
 {
   "name": "@jmorecroft67/pg-stream-cli",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "bin": {
     "pg-stream": "./src/index.js"
   },
@@ -8,7 +8,7 @@
     "directory": "../../dist/packages/cli"
   },
   "engines": {
-    "node": ">=20.12.0"
+    "node": ">=20.4.0"
   },
   "dependencies": {
     "@effect/cli": "0.35.24",
